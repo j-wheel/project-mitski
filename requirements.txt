@@ -1,0 +1,9 @@
+discord.py-self[voice]>=2.1
+aiohttp>=3.9
+PyYAML>=6.0
+pillow>=10
+emoji>=2.10
+ddgs>=6
+youtube-transcript-api>=0.6
+mutagen>=1.47
+tzdata; sys_platform == "win32"
