@@ -1,6 +1,6 @@
 import pytest
 
-from mitski.chat.policy import ADULT_NOTE, SAFE_NOTE, ContentPolicy, asks_if_bot, explicit
+from mitski.chat.policy import ADULT_NOTE, SAFE_NOTE, ContentPolicy, explicit
 from mitski.testing.fakes import FakeChannel, FakeClient, FakeGuild
 
 
@@ -18,24 +18,6 @@ from mitski.testing.fakes import FakeChannel, FakeClient, FakeGuild
 )
 def test_explicit(text, flagged):
     assert explicit(text) is flagged
-
-
-@pytest.mark.parametrize(
-    ("text", "asking"),
-    [
-        ("are you a bot?", True),
-        ("wait r u an ai", True),
-        ("am i talking to a bot rn", True),
-        ("is mitski an ai", True),
-        ("are you actually a bot", True),
-        ("r u really human", True),
-        ("is this a real person", True),
-        ("ur such a bot lol", False),
-        ("the bot in this game is broken", False),
-    ],
-)
-def test_asks_if_bot(text, asking):
-    assert asks_if_bot(text) is asking
 
 
 class App:

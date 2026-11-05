@@ -4,7 +4,7 @@ import time
 
 import discord
 
-from mitski.chat import convo, shape
+from mitski.chat import convo, shape, typos
 from mitski.chat.messages import short_name
 from mitski.chat.patterns import NO_PINGS, PING_TAG, STICKER_TAG
 from mitski.core import logs
@@ -14,9 +14,15 @@ from mitski.core.metrics import Metrics
 log = logs.get("sender")
 
 GONE_OR_INVALID = (10008, 50035, 160002)
+TYPING_MAX = 8
+LONG_TYPING_MAX = 20
 
 
 class Sender(Component):
+    def __init__(self, app):
+        super().__init__(app)
+        self.last_sent = {}
+
     def remember(self, sent, user_id):
         for m in sent:
             self.state.addressed[m.id] = user_id
@@ -61,6 +67,7 @@ class Sender(Component):
         parts=None,
         layout=shape.QUICK,
         targets=None,
+        longer=False,
     ):
         styled = self.styled(lines, parts, serious, layout)
         recent = [uid for _, uid in list(self.state.chan_log.get(channel.id, ()))[-30:]]
@@ -102,12 +109,61 @@ class Sender(Component):
             out.allowed |= {u.id for u in pinged}
             if not line:
                 continue
-            await self._type(out, line, already_typed)
+            line, typo = self._maybe_typo(line)
+            await self._type(out, line, already_typed, LONG_TYPING_MAX if longer else TYPING_MAX)
             if not out.decided and not out.apply(plan()):
                 return out.sent
             line = out.with_ping(line, is_last=i == last_text)
             await self._post(out, line)
+            if typo is not None:
+                self._maybe_fix(out.sent[-1], typo)
         return out.sent
+
+    def _maybe_typo(self, line):
+        if random.random() >= typos.chance(line, self.cfg.TYPO_CHANCE):
+            return line, None
+        line, typo = typos.add_typo(line, random)
+        if typo is not None:
+            Metrics.event("typo")
+        return line, typo
+
+    def _maybe_fix(self, msg, typo):
+        if random.random() >= self.cfg.TYPO_FIX_CHANCE:
+            return
+        low, high = (list(self.cfg.TYPO_FIX_DELAY) + [3, 12])[:2]
+        delay = random.uniform(min(low, high), max(low, high))
+        self.app.tasks.spawn(self._fix_typo(msg, typo, delay), name=f"fix-typo-{msg.id}")
+
+    async def _fix_typo(self, msg, typo, delay):
+        await asyncio.sleep(delay)
+        fixed = typos.fix(msg.content, *typo)
+        if fixed is None or self._away(msg.channel):
+            return
+        latest = self.last_sent.get(msg.channel.id) == msg.id
+        try:
+            if latest and random.random() < self.cfg.TYPO_STAR_CHANCE:
+                await self._star(msg.channel, typo[1])
+                how = "with a *"
+            else:
+                await msg.edit(content=fixed, allowed_mentions=NO_PINGS)
+                how = "by editing"
+        except discord.HTTPException as e:
+            log.info("couldn't fix a typo (%s)", e.text or e.code)
+            return
+        Metrics.event("typo fixed")
+        log.info("fixed a typo %s: %s -> %s", how, *typo)
+
+    async def _star(self, channel, word):
+        async with self.app.voice.typing_in(channel):
+            await asyncio.sleep(random.uniform(0.4, 1.2))
+        msg = await channel.send(typos.star(word, random), allowed_mentions=NO_PINGS)
+        self.last_sent[channel.id] = msg.id
+        self.state.recent_said[channel.id].append(msg.content)
+        Metrics.sent()
+
+    def _away(self, channel):
+        guild = getattr(channel, "guild", None)
+        return guild is not None and (self.app.away.asleep(guild.id) or self.app.away.is_quiet(guild.id))
 
     async def _sticker(self, out, name):
         sticker = self.app.emojis.find_sticker(out.guild, name)
@@ -119,8 +175,9 @@ class Sender(Component):
         except discord.HTTPException as e:
             log.warning("sticker failed: %s", e)
 
-    async def _type(self, out, line, already_typed):
-        seconds = min(len(line) / (self.cfg.TYPING_CPS * random.uniform(0.8, 1.2)), 8) + random.uniform(0.2, 0.8)
+    async def _type(self, out, line, already_typed, longest=None):
+        longest = TYPING_MAX if longest is None else longest
+        seconds = min(len(line) / (self.cfg.TYPING_CPS * random.uniform(0.8, 1.2)), longest) + random.uniform(0.2, 0.8)
         if not out.sent:
             seconds = max(0.0, seconds - already_typed)
         else:
@@ -157,6 +214,7 @@ class Sender(Component):
         if msg is None:
             msg = await out.channel.send(line, allowed_mentions=mentions)
         out.sent.append(msg)
+        self.last_sent[out.channel.id] = msg.id
         Metrics.sent()
         self.state.recent_said[out.channel.id].append(line)
         if out.guild is not None:

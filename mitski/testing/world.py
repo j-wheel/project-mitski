@@ -28,6 +28,7 @@ QUIET_WORLD = {
     "SPLIT_CHANCE": 0,
     "STRETCH_CHANCE": 0,
     "FLAIR_CHANCE": 0,
+    "TYPO_CHANCE": 0,
     "SLANG": 0,
     "NO_APOSTROPHES": 0,
     "PING_CHANCE": 0,

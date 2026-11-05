@@ -32,6 +32,16 @@ SEEN_LATE_SEC = 180
 CATCHING_UP_SEC = (5, 180)
 PING_TOO_OLD_SEC = 3 * 3600
 WANTS_ONE_BACK = re.compile(r"^(?:gn|gm)\b", re.I)
+LONG_NOTE = (
+    "This one deserves a proper answer, so you can write more than you usually do: a few full sentences, or a few "
+    "messages in a row, still in your own style and voice. Say what's worth saying, don't pad it out."
+)
+LONG_ASK = re.compile(
+    r"\b(explain|tell me (?:about|everything|more)|how (?:was|did|do|does)|what happened|walk me through|"
+    r"any (?:advice|tips)|what should i do|help me (?:with|understand|figure))\b",
+    re.I,
+)
+LONG_MESSAGE = 250
 FIXES = {
     "echo": "Don't repeat or copy anything anyone said, reply to it in your own words.",
     "robotic": "Talk like yourself, a person, not like an assistant.",
@@ -76,6 +86,7 @@ class Reply:
     sent: list = field(default_factory=list)
     outcome: str = "dropped"
     adult: bool = False
+    long: bool = False
 
     @property
     def guild(self):
@@ -99,6 +110,10 @@ class Reply:
 
 
 class ReplyPipeline(Component):
+    def __init__(self, app):
+        super().__init__(app)
+        self.long_at = {}
+
     def queue(self, channel, mode, msg):
         key = (channel.id, msg.author.id)
         self.state.last_msg_time[key] = time.monotonic()
@@ -408,7 +423,30 @@ class ReplyPipeline(Component):
             )
             log.info("[%s] chiming in on %s's message to someone else", reply.mode, target.author)
         self._split_topics(reply, chiming)
+        reply.long = self._long(reply, chiming)
+        if reply.long:
+            reply.extras.append(LONG_NOTE)
         reply.extras_for = target.id
+        return True
+
+    def _long(self, reply, chiming):
+        """Whether this reply may be longer than usual. Her planner says when the moment calls for it, and this
+        keeps it occasional: only when someone's talking to her, not while she's busy, and not again too soon."""
+        if not (self.cfg.LONG_REPLIES and reply.direct) or chiming:
+            return False
+        if self.app.brain.enabled:
+            wanted = reply.thought.length == "longer"
+        else:
+            wanted = bool(LONG_ASK.search(reply.said)) or len(reply.said) >= LONG_MESSAGE
+        if not wanted or self.app.routine.level not in (None, "gaming"):
+            return False
+        now = time.monotonic()
+        if now - self.long_at.get(reply.channel.id, NEVER) < self.cfg.LONG_REPLY_COOLDOWN_MIN * 60:
+            log.info("[%s] it could use a longer reply, but she wrote one here not long ago", reply.mode)
+            return False
+        self.long_at[reply.channel.id] = now
+        log.info("[%s] giving this one a longer reply", reply.mode)
+        Metrics.event("longer reply")
         return True
 
     def _split_topics(self, reply, chiming):
@@ -450,9 +488,7 @@ class ReplyPipeline(Component):
         reply.lines = drafts.tidy(reply.text, channel_id, ctx.others)
         seen = self._seen(reply)
         problem = (
-            drafts.problem(reply.lines, seen, False, reply.adult, self._asked_directly(reply))
-            if reply.lines
-            else None
+            drafts.problem(reply.lines, seen, False, reply.adult, self._asked_directly(reply)) if reply.lines else None
         )
         if problem:
             log.info("[%s] reply looked %r, trying again: %s", reply.mode, problem, " | ".join(reply.lines))
@@ -667,6 +703,7 @@ class ReplyPipeline(Component):
             serious=reply.serious,
             crowded=any(a not in (self.me.id, to_id) for a in after),
             can_thread=bool(groups) and len(groups) >= 2,
+            longer=reply.long,
         )
         if reply.layout == shape.THREADED and not groups:
             reply.layout = shape.BLOCK
@@ -690,6 +727,7 @@ class ReplyPipeline(Component):
             parts=reply.parts,
             layout=reply.layout,
             targets=reply.targets,
+            longer=reply.long,
         )
         if not reply.sent or reply.delivery is None:
             return reply.stop("not sent")

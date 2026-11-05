@@ -44,11 +44,12 @@ def threaded(groups, rng):
     return parts, targets
 
 
-def pick(answers, *, serious=False, crowded=False, can_thread=False, rng=None):
+def pick(answers, *, serious=False, crowded=False, can_thread=False, longer=False, rng=None):
     """How a reply looks once it's written: a few quick messages, one longer message, or a reply to each question.
 
     The model can't choose this, it almost never saw a line break in training, so it's decided here from what a
-    person would go by: how many things they're answering, how long it is, and how busy the chat is.
+    person would go by: how many things they're answering, how long it is, and how busy the chat is. A reply that
+    was meant to be longer leans towards one proper message, the way people write when they're really explaining.
     """
     rng = rng or random
     lines = [ln for answer in answers for ln in answer]
@@ -71,6 +72,9 @@ def pick(answers, *, serious=False, crowded=False, can_thread=False, rng=None):
         weights[THREADED] += 2 if weights[THREADED] else 0
     if serious:
         weights[BLOCK] += 4
+    if longer:
+        weights[QUICK] = max(1, weights[QUICK] - 4)
+        weights[BLOCK] += 6
     if not can_thread:
         weights[THREADED] = 0
     kinds = list(weights)

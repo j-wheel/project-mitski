@@ -232,6 +232,8 @@ class AdminCommands(Component):
         return [f"**reminders ({len(rows)})**\n" + ("\n".join(rows) or "none")]
 
     async def _routine(self, call):
+        if call.rest.strip().lower() in ("redo", "again", "new"):
+            return [self.app.routine.redo()]
         return [self.app.routine.listing()]
 
     async def _busy(self, call):

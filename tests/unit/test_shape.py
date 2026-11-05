@@ -58,6 +58,11 @@ def test_serious_replies_lean_to_one_message():
     assert serious[shape.BLOCK] > calm[shape.BLOCK]
 
 
+def test_a_longer_reply_mostly_goes_out_as_one_proper_message():
+    seen = many([[LINE, LINE, LINE]], longer=True)
+    assert seen[shape.BLOCK] > seen[shape.QUICK] > 0
+
+
 @pytest.mark.parametrize(
     ("text", "pieces"),
     [

@@ -19,17 +19,23 @@ a throwaway account and don't be surprised if it gets banned.
 - Works out who a message is for and replies, pings or just sends a message so it's clear who she's talking to
 - Answers several messages from one person together, and answers each question when they ask a few different things
 - Lays a reply out like a person would: a few quick messages, one longer message, or a reply to each question
+- Keeps it short most of the time, but now and then writes a longer reply when the moment calls for it: explaining
+  something properly, giving advice, telling a story, or being there for someone (`LONG_REPLIES`). Never while
+  she's busy, and not twice in a row in the same channel
 - Lets tiny follow-ups that close a chat ("lol", "ok") go without replying, unless she asked them something
 - Remembers people between conversations (facts, nicknames, what they play and listen to, past chats)
 - Thinks before answering questions: web search, weather, time, math, scrolling back through the chat
 - Looks at images, gifs, stickers and short videos people send
 - Uses the server's emojis and stickers, reacts to messages, sends gifs (giphy)
-- Types like a person: lowercase, slang, a few quick messages in a row, typing delays
+- Types like a person: lowercase, slang, a few quick messages in a row, typing delays, and now and then a small typo
+  (a neighbouring key, two letters swapped, a missed letter) that she sometimes fixes a few seconds later, by editing
+  the message or with a quick "*word"
 - Joins voice chats now and then and plays keyboard sounds while she types (she never talks in vc)
 - Sets reminders when asked ("remind me in 2h to drink water") and pings the person when it's time
 - Goes away in a server for a couple of hours now and then, more often late at night
-- Has a daily routine (`ROUTINE`): she sleeps, has a long busy block on most weekdays, errands and gaming sessions.
-  While she's busy she only looks at her phone now and then, so dms and pings can wait a while, dms the least
+- Has a daily routine (`ROUTINE`) that her model plans a day ahead: classes or work, errands, friends, gaming and
+  now and then a short trip, different every day (see [Her routine](#her-routine)). While she's busy she only looks
+  at her phone now and then, so dms and pings can wait a while, dms the least
 - An owner account she listens to, with standing orders, quiet mode, status changes and dms
 - Channels, ignored users and sleep settings can be changed from discord without restarting
 - Her owner can keep people out of her memory with `MEMORY_OPTOUT`
@@ -85,11 +91,43 @@ The generated config is deliberately generic. These are the options that decide 
 - `STYLE_NOTE`: a short reminder of how she types, given to her with every reply.
 - `SLANG`, `LOWERCASE`, `NO_APOSTROPHES`, `STRETCH_CHANCE`, `FLAIR_CHANCE`: how much her messages get roughed up
   right before they're sent.
+- `TYPO_CHANCE`, `TYPO_FIX_CHANCE`, `TYPO_STAR_CHANCE`, `TYPO_FIX_DELAY`: how often a message gets a small typo
+  (about 1 in 25 by default, a bit more in long ones), how often she fixes it, how often that's a quick "*word"
+  instead of an edit, and how many seconds later.
+- `MAX_LINES`, `LONG_REPLIES`, `LONG_REPLY_COOLDOWN_MIN`: how many messages a reply can be, and whether she
+  sometimes writes a longer one when it's called for.
 - `IDENTITY_NOTE`: the rules she always keeps (no assistant talk, stays in character, doesn't lie when someone
   sincerely asks if she's a bot). Leave it empty to use the built-in one, which calls her by the discord account's name.
 - `ACTIVITY_TYPE` and `ACTIVITY_TEXT`: what her discord status says she's doing.
-- `ROUTINE` and the `ROUTINE_*` options: her daily schedule, what keeps her busy and what she plays.
-- `TIMEZONE` and `GIF_STYLE`: where she lives, and a word added to her gif searches (like "anime").
+- `ROUTINE_LIFE` and `ROUTINE_PLACE`: who she is day to day and where she lives, which her daily plans are made from
+  (see [Her routine](#her-routine)).
+- `TIMEZONE` and `GIF_STYLE`: her local time (set it to match `ROUTINE_PLACE`), and a word added to her gif searches
+  (like "anime").
+
+## Her routine
+
+With `ROUTINE: true` she has a life outside discord. While she's in a lecture, at work or asleep she only checks her
+phone now and then, and when she's gaming she checks it more often. With `ROUTINE_PLANNER` on (the default), her
+model plans it from `ROUTINE_LIFE` in four layers, each one feeding the next:
+
+1. **Her year.** About once a week she googles the academic calendar and public holidays for `ROUTINE_PLACE`, and
+   works out whether it's a normal term, exams or a break, and until when.
+2. **Her weekly timetable.** Once a semester her model writes the classes (or shifts) she has at the same time every
+   week, so her Monday lectures are always on Mondays.
+3. **Her week.** Each week it picks a few things that make the week hers, like a project deadline, dinner with
+   friends or a gig it found by googling what's on.
+4. **Her day.** Each evening it plans tomorrow in detail, from that week's plans, what she did yesterday, the weather
+   forecast and what she's already told people about herself, so her days differ and stay consistent.
+
+The code keeps it in bounds. Plans with anything life-changing are thrown out (pregnancy, weddings, new
+relationships, expensive things like a Ferrari, hospitals, police, moving, dropping out). She only travels on trips
+the code decides on: `ROUTINE_TRIP_CHANCE` a week, never during exams, at least `ROUTINE_TRIP_GAP_WEEKS` apart. Her
+model only picks where she goes. Times, overlaps and sleep length are checked too.
+
+Planning runs in the background and gives way to her replies. Plans are kept in `data/routine.json`, so a restart
+doesn't change them. Until a day is planned, or if her model can't be reached, she falls back to the simple plan from
+`ROUTINE_SLEEP`, `ROUTINE_BUSY`, `ROUTINE_ERRANDS` and `ROUTINE_GAMES`. `!routine` shows what she's doing, her plan for
+the next 24 hours and any upcoming trip, and `!routine redo` throws away today's plan and makes a new one.
 
 ## Commands
 
@@ -122,7 +160,7 @@ command                     alias   what it does
 !sleepinclude <server ...>  !si     undo that
 !listsleep                  !ls     sleep settings, and where she's asleep or quiet right now
 !reminders                  !rem    list pending reminders (cancel <n>, clear)
-!routine                    !rt     what she's doing now and her plan for the next 24 hours
+!routine [redo]             !rt     what she's doing now and her plan for the next 24 hours (redo: plan today again)
 !busy <min> [what]          !bz     make her busy for a while, like "!busy 45 at the dentist"
 !free [min]                 !fr     make her free for a while, whatever her plan says (60 min without a number)
 

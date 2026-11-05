@@ -5,6 +5,7 @@ from datetime import datetime, time, timedelta
 
 from mitski.core import logs
 from mitski.core.component import Component
+from mitski.social.life import LifePlanner
 
 log = logs.get("routine")
 
@@ -124,6 +125,7 @@ class Routine(Component):
             games=tuple(cfg.ROUTINE_GAMES),
             games_per_day=tuple(cfg.ROUTINE_GAMES_PER_DAY),
         )
+        self.planner = LifePlanner(app, on_change=self._replanned)
         self.days = {}
         self.forced = None
         self.free_until = 0.0
@@ -141,8 +143,27 @@ class Routine(Component):
     def _day(self, day, tz):
         if day not in self.days:
             self.days = {d: plans for d, plans in self.days.items() if abs((d - day).days) <= 2}
-            self.days[day] = plan_day(day, self.week, tz, self.cfg.OWNER_ID)
+            planned = self.planner.spells(day, tz)
+            if planned is not None:
+                self.days[day] = [Spell(*s) for s in planned]
+            else:
+                self.days[day] = plan_day(day, self.week, tz, self.cfg.OWNER_ID)
         return self.days[day]
+
+    def _replanned(self, day):
+        self.days.pop(day, None)
+        if day == self.now().date():
+            self.last = ()
+
+    def redo(self):
+        if not self.on:
+            return "routine is off, `ROUTINE: true` first"
+        if not self.planner.on:
+            return "her model doesn't plan her days, `ROUTINE_PLANNER: true` first"
+        now = self.now()
+        self.planner.redo(now.date())
+        self.planner.ensure(now)
+        return "planning her day again, ask for her routine again in a minute or two"
 
     def spell(self, now=None):
         if not self.on:
@@ -223,7 +244,7 @@ class Routine(Component):
     def note(self):
         spell = self.spell()
         if spell is None:
-            return ""
+            return self.planner.today_note(self.now()) if self.on else ""
         if spell.level == ASLEEP:
             return "You were asleep and this just woke you up, so you're groggy and keep it short."
         return f"Right now you're {spell.what}, so you're only half here and keep it short."
@@ -257,7 +278,16 @@ class Routine(Component):
         ]
         spell = self.spell()
         state = f"{spell.what} until {spell.end:%H:%M}" if spell else "free"
-        return f"**routine: on**, right now {state}\nnext 24 hours:\n" + ("\n".join(rows) or "nothing planned")
+        if not self.planner.on:
+            source = "simple plan from the config"
+        elif self.planner.planned(now.date()):
+            source = "planned by her model"
+        else:
+            source = "simple plan for now, her model is still planning today"
+        about = "".join(f"\n{line}" for line in self.planner.describe(now.date())) if self.planner.on else ""
+        return f"**routine: on** ({source}), right now {state}{about}\nnext 24 hours:\n" + (
+            "\n".join(rows) or "nothing planned"
+        )
 
     async def _changed(self, spell):
         self.around_until = 0.0
@@ -272,6 +302,8 @@ class Routine(Component):
                     await self.app.sleep.say_bye(guild)
 
     async def tick(self):
+        if self.on:
+            self.planner.ensure(self.now())
         spell = self.spell()
         key = (spell.start, spell.what) if spell else None
         if key == self.last:

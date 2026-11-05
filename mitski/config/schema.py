@@ -100,12 +100,41 @@ SECTIONS = (
         ),
     ),
     Section(
-        "routine: her day (sleep, a long busy block on weekdays, errands, gaming). while she's busy she only looks at "
-        "her phone now and then, so dms and pings can wait a while. !routine shows today's plan, !busy and !free change it",
+        "routine: her day (sleep, classes or work, errands, friends, gaming). while she's busy she only looks at her "
+        "phone now and then, so dms and pings can wait a while. !routine shows today's plan, !routine redo plans it "
+        "again, !busy and !free change it",
         (
             Option("ROUTINE", False, "she has a daily routine. false = she's always available"),
             Option(
-                "ROUTINE_SLEEP", ["02:00", "10:00"], "when she's asleep. dms wait until morning, old pings are let go"
+                "ROUTINE_PLANNER",
+                True,
+                "her model plans each day ahead from ROUTINE_LIFE, and googles her term dates, holidays and what's on "
+                "where she lives (data/routine.json). false, or while the model can't be reached: the simple plan "
+                "from the ROUTINE_ options below",
+            ),
+            Option(
+                "ROUTINE_LIFE",
+                "an ordinary 20-something with a weekday job, a few close friends and some hobbies, who games in the "
+                "evenings now and then",
+                "who she is day to day, for planning her days: age, studies or job, who she lives with, what she does",
+            ),
+            Option(
+                "ROUTINE_PLACE",
+                "",
+                'where she lives, e.g. "Lisbon, Portugal": her searches and the weather for her plans use it. '
+                "empty = no lookups",
+            ),
+            Option(
+                "ROUTINE_TRIP_CHANCE",
+                0.1,
+                "chance per week she goes away for a few days (never during exams, and not again too soon)",
+            ),
+            Option("ROUTINE_TRIP_GAP_WEEKS", 6, "at least this many weeks between trips"),
+            Option("ROUTINE_TRIP_DAYS", [1, 4], "how long a trip lasts, in days"),
+            Option(
+                "ROUTINE_SLEEP",
+                ["02:00", "10:00"],
+                "when she's asleep (her model keeps close to it). dms wait until morning, old pings are let go",
             ),
             Option(
                 "ROUTINE_BUSY", ["11:00", "16:00"], "her long busy block on most weekdays, with a break in the middle"
@@ -120,7 +149,8 @@ SECTIONS = (
             Option(
                 "ROUTINE_GAMES",
                 ["in a ranked match", "playing games with friends"],
-                "gaming sessions, she checks her phone more often than when she's busy but doesn't join in by herself",
+                "gaming sessions, she checks her phone more often than when she's busy but doesn't join in by herself. "
+                "her model also uses these as the games she plays",
             ),
             Option("ROUTINE_GAMES_PER_DAY", [0, 2], "how many of those a day"),
             Option("ROUTINE_LOOK_BUSY", [300, 1500], "seconds between looking at her phone while busy"),
@@ -453,7 +483,15 @@ SECTIONS = (
             Option("PRESENCE_PENALTY", 1.5, "stops her repeating herself. if her wording gets odd, try 0.5-1.0"),
             Option("REPEAT_PENALTY", 1.0, ""),
             Option("MAX_TOKENS", 1000, "max tokens per reply"),
-            Option("MAX_LINES", 5, "max separate messages per reply"),
+            Option("MAX_LINES", 8, "max separate messages per reply (most of her replies are much shorter)"),
+            Option(
+                "LONG_REPLIES",
+                True,
+                "now and then she writes a longer reply when the moment calls for it: explaining something, advice, "
+                "a story, someone going through something. her planner decides (THINKING), and never while she's "
+                "busy or asleep. false = always short",
+            ),
+            Option("LONG_REPLY_COOLDOWN_MIN", 10, "at least this long between longer replies in the same channel"),
             Option("STRIP_PERIODS", True, 'remove a single "." at the end of messages (keeps "...")'),
             Option("DROP_UNKNOWN_EMOJIS", True, "remove :emoji_names: she can't actually use"),
             Option(
@@ -485,6 +523,20 @@ SECTIONS = (
             Option("SPLIT_CHANCE", 0.5, "chance a long line with a few sentences becomes a few quick messages"),
             Option("STRETCH_CHANCE", 0.05, 'chance she stretches the last word of a message ("sooo", "pleaseee")'),
             Option("FLAIR_CHANCE", 0.0, "chance she ends a lighthearted reply with ~ >.< :3 or hehe"),
+            Option(
+                "TYPO_CHANCE",
+                0.04,
+                "chance a message gets one small typo (a neighbouring key, two letters swapped, a missed or doubled "
+                "letter), a bit more in long messages. never in links, mentions, emojis or CAPS. 0 = never",
+            ),
+            Option("TYPO_FIX_CHANCE", 0.5, "chance she fixes the typo shortly after"),
+            Option(
+                "TYPO_STAR_CHANCE",
+                0.4,
+                'when she fixes one: chance she sends a quick "*word" instead of editing the message (only if it\'s '
+                "still her latest message there, otherwise she edits)",
+            ),
+            Option("TYPO_FIX_DELAY", [3, 12], "seconds after sending before she fixes it"),
             Option(
                 "STYLE_NOTE",
                 "Type like a regular person on discord: short, casual messages, some slang and abbreviations are fine, not uptight.",

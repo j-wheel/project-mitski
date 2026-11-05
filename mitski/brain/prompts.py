@@ -29,12 +29,14 @@ REPLY_TYPES = {
     "other": "",
 }
 ANSWERY = {"answer_question", "describe", "help", "opinion"}
+LENGTHS = ("short", "longer")
 PLAN = {
     "type": "object",
     "properties": {
         "to_her": {"type": "string", "enum": ["her", "someone_else", "everyone"]},
         "wants": {"type": "string", "maxLength": 160},
         "reply_type": {"type": "string", "enum": list(REPLY_TYPES)},
+        "length": {"type": "string", "enum": list(LENGTHS)},
         "answer": {"type": "string", "maxLength": 300},
         "tools": {
             "type": "array",
@@ -50,7 +52,7 @@ PLAN = {
             },
         },
     },
-    "required": ["to_her", "wants", "reply_type", "answer", "tools"],
+    "required": ["to_her", "wants", "reply_type", "length", "answer", "tools"],
     "additionalProperties": False,
 }
 PLAN_OWNER = {
@@ -200,7 +202,7 @@ def plan_request(q, tools, now):
         f"You're {her}'s quick inner thoughts right before she replies on discord. She's a real person in a group "
         f"chat: she works out who a message is for, what they want, checks things on her phone when she needs to, "
         f"and then actually answers instead of dodging. It's {now.strftime('%A %Y-%m-%d %H:%M')} where she is. "
-        f'Answer with JSON: {{"to_her": "...", "wants": "...", "reply_type": "...", '
+        f'Answer with JSON: {{"to_her": "...", "wants": "...", "reply_type": "...", "length": "...", '
         f'"answer": "...", "tools": [{{"tool": "...", "input": "..."}}]}}'
     )
     user = (
@@ -212,6 +214,11 @@ def plan_request(q, tools, now):
         + f'wants: one short sentence on what {name} wants. {her} is "you" here (like "to know if you\'re still '
         f'here"), never her name or "she".\n'
         f"reply_type: one of {', '.join(REPLY_TYPES)}. no_reply if it doesn't need an answer from her at all.\n"
+        f'length: "short" almost always: chatting, jokes, reactions, greetings and quick questions get a quick line '
+        f'or two. "longer" only when a good reply really needs more than that: they asked her to explain or '
+        f"describe something properly, want advice or help with specifics, asked for a story (how her trip, exam "
+        f"or day went), are going through something and need her to really be there, or wrote a long, thoughtful "
+        f"message that deserves a real answer.\n"
         f"answer: if they ask something {her} can answer from what she knows or what's in the chat, the gist of "
         f"the answer as a short note of what she'd say, in her own voice: when it's about {her} herself it's "
         f'"i" and "my", never her name or "she" (like "canberra, not sydney" or "yes, i\'m still here"). A note, '

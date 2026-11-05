@@ -161,6 +161,11 @@ class FakeMessage:
     async def add_reaction(self, emoji):
         self.reactions.append(emoji)
 
+    async def edit(self, content=None, allowed_mentions=None, **kwargs):
+        self.edits = [*getattr(self, "edits", []), self.content]
+        self.content = self.clean_content = content
+        return self
+
 
 class FakeDM(discord.DMChannel):
     def __init__(self, client, user):

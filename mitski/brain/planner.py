@@ -42,6 +42,7 @@ class Thought:
     actions: dict = field(default_factory=dict)
     checked: bool = False
     topics: list | None = None
+    length: str = "short"
 
     def __post_init__(self):
         self.notes = [n for n in self.notes if n]
@@ -205,6 +206,7 @@ class Brain(Component):
             plan.get("to_her") if plan.get("to_her") in ("her", "someone_else", "everyone") else "her"
         )
         reply_type = plan.get("reply_type") if plan.get("reply_type") in prompts.REPLY_TYPES else "other"
+        length = plan.get("length") if plan.get("length") in prompts.LENGTHS else "short"
         wants = voice.to_you(cut(str(plan.get("wants") or "").strip(), 160), self.messages.own_names())
         answer = cut(str(plan.get("answer") or "").strip(), 300)
         if not q.explicit and to_her == "someone_else":
@@ -229,7 +231,17 @@ class Brain(Component):
         brief = self._in_her_voice(q, brief)
         notes = self._notes(q, to_her, reply_type, wants, brief, checked, failed)
         actions = self._actions(q, plan)
-        await self._report(q, plan, to_her, reply_type, wants, brief, steps, checked, actions)
+        await self._report(
+            q,
+            plan,
+            to_her,
+            f"{reply_type}, longer" if length == "longer" else reply_type,
+            wants,
+            brief,
+            steps,
+            checked,
+            actions,
+        )
         return Thought(
             notes,
             to_her,
@@ -239,6 +251,7 @@ class Brain(Component):
             actions,
             checked=bool(checked),
             topics=self._topics(q, plan),
+            length=length,
         )
 
     @staticmethod

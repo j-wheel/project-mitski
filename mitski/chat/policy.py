@@ -23,10 +23,6 @@ def explicit(text):
     return SEXUAL.search(text or "") is not None
 
 
-def asks_if_bot(text):
-    return ASKS_IF_BOT.search(text or "") is not None
-
-
 class ContentPolicy(Component):
     def adult_ok(self, channel, minors=False):
         if minors or self.cfg.ADULT_CONTENT == "never":

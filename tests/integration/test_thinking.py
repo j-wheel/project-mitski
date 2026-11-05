@@ -45,6 +45,48 @@ async def test_owner_quiet_request_is_applied(world):
     assert 19 <= world.app.away.quiet_left(world.guild.id) <= 21
 
 
+LONG = "deserves a proper answer"
+
+
+async def test_she_gets_room_for_a_longer_reply_when_her_planner_says_so(world):
+    planner(world, reply_type="describe", length="longer")
+    world.replies.append("ok so basically")
+    await world.send(world.people["anna"], "mitski how do suspension bridges actually stay up?")
+    assert LONG in world.prompts[-1]
+
+
+async def test_most_replies_stay_short(world):
+    planner(world, reply_type="answer_question", length="short")
+    world.replies.append("yea")
+    await world.send(world.people["anna"], "mitski did u eat yet?")
+    assert LONG not in world.prompts[-1]
+
+
+async def test_longer_replies_dont_come_back_to_back(world):
+    planner(world, reply_type="describe", length="longer")
+    world.replies.extend(["ok so", "and then"])
+    await world.send(world.people["anna"], "mitski explain how concrete cures?")
+    await world.send(world.people["bob"], "mitski and how does rebar help with that?")
+    assert LONG in world.prompts[0] and LONG not in world.prompts[-1]
+
+
+async def test_no_longer_replies_while_shes_busy(world, monkeypatch):
+    monkeypatch.setattr(type(world.app.routine), "level", property(lambda self: "busy"))
+    planner(world, reply_type="describe", length="longer")
+    world.replies.append("in class rn, later")
+    await world.send(world.people["anna"], "mitski how do suspension bridges actually stay up?")
+    assert LONG not in world.prompts[-1]
+
+
+async def test_without_her_planner_an_obvious_ask_still_gets_room(world):
+    world.replies.extend(["ok so", "yea"])
+    await world.send(world.people["anna"], "mitski can u explain how the exam grading works")
+    assert LONG in world.prompts[-1]
+    world.app.pipeline.long_at.clear()
+    await world.send(world.people["bob"], "mitski u up?")
+    assert LONG not in world.prompts[-1]
+
+
 async def test_trivial_messages_skip_planning(world):
     asked = planner(world)
     world.replies.append("hii")

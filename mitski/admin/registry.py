@@ -55,7 +55,12 @@ GROUPS = (
         "her day",
         (
             Command("reminders", ("rem",), "[cancel <n>|clear]", "list or cancel pending reminders"),
-            Command("routine", ("rt",), "", "what she's doing now and her plan for the next 24 hours"),
+            Command(
+                "routine",
+                ("rt",),
+                "[redo]",
+                "what she's doing now and her plan for the next 24 hours (redo: plan again)",
+            ),
             Command("busy", ("bz",), "<min> [what]", "make her busy for a while"),
             Command("free", ("fr",), "[min]", "make her free for a while, whatever her plan says"),
         ),

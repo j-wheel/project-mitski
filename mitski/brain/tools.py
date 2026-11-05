@@ -133,6 +133,39 @@ class Toolbox(Component):
             + f"{local}."
         )
 
+    async def day_forecast(self, where, day):
+        p = await self.place(where)
+        if not p:
+            return ""
+        params = {
+            "latitude": p["latitude"],
+            "longitude": p["longitude"],
+            "timezone": "auto",
+            "start_date": day.isoformat(),
+            "end_date": day.isoformat(),
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
+        }
+        if self.fahrenheit:
+            params["temperature_unit"] = "fahrenheit"
+        async with self.app.http.get(FORECAST_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            if r.status != 200:
+                return ""
+            daily = (await r.json(content_type=None)).get("daily") or {}
+
+        def first(key):
+            v = daily.get(key)
+            return v[0] if isinstance(v, list) and v else None
+
+        parts = []
+        if first("weather_code") is not None:
+            parts.append(WMO.get(int(first("weather_code")), "mixed weather"))
+        if first("temperature_2m_min") is not None and first("temperature_2m_max") is not None:
+            unit = "°F" if self.fahrenheit else "°C"
+            parts.append(f"{round(first('temperature_2m_min'))} to {round(first('temperature_2m_max'))}{unit}")
+        if (first("precipitation_probability_max") or 0) >= 30:
+            parts.append(f"{first('precipitation_probability_max')}% chance of rain")
+        return ", ".join(parts)
+
     async def time_in(self, where):
         p = await self.place(where)
         if not p:
