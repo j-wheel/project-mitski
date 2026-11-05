@@ -9,7 +9,7 @@ from mitski.chat.patterns import (
     STICKER_TAG,
     USER_MENTION,
 )
-from mitski.chat.policy import AI_ADMISSION, explicit
+from mitski.chat.policy import explicit
 from mitski.core import voice
 from mitski.core.component import Component
 from mitski.core.metrics import Metrics
@@ -89,7 +89,7 @@ class DraftFilter(Component):
         return [ln for ln in lines if len(_norm(ln)) >= 8 and (_norm(ln) in whole or f" {_norm(ln)} " in blob)]
 
     def problem(self, lines, msgs, honest=False, adult=True, direct=False):
-        if any(ROBOTIC.search(ln) or (not honest and AI_ADMISSION.search(ln)) for ln in lines):
+        if any(ROBOTIC.search(ln) for ln in lines):
             return "robotic"
         if not adult and any(explicit(ln) for ln in lines):
             return "explicit"

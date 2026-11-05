@@ -24,14 +24,25 @@ LIVE_LISTS = {
     "CHANNELS": "channel ids she talks in (!addchannel / !delchannel / !listchannels change this live)",
     "IGNORE_USERS": "user ids she ignores completely (!ignoreuser / !unignoreuser / !listusers change this live)",
     "SLEEP_EXCLUDE": "server ids where she never goes to sleep by herself (!sleepexclude / !sleepinclude change this live)",
-    "MEMORY_OPTOUT": "user ids she keeps no memory about (!forgetme / !rememberme change this live, anyone can use them)",
+    "MEMORY_OPTOUT": "user ids she keeps no memory about (!forgetme / !rememberme change this live for her owner, edit this list for anyone else)",
 }
 TRUE_WORDS = {"true", "yes", "on", "1"}
 FALSE_WORDS = {"false", "no", "off", "0", ""}
+PREFIX_MAX = 5
 
 
 class ConfigError(Exception):
     pass
+
+
+def prefix_problem(prefix):
+    if not prefix or any(c.isspace() or c == "`" for c in prefix):
+        return "the prefix can't be empty or have spaces or backticks in it"
+    if len(prefix) > PREFIX_MAX:
+        return f"keep the prefix to {PREFIX_MAX} characters or fewer"
+    if prefix.isalnum():
+        return "the prefix needs a symbol in it, otherwise normal chat gets read as commands"
+    return None
 
 
 def coerce(key, raw):
@@ -97,6 +108,11 @@ class Settings:
         object.__setattr__(self, "ignored", {int(u) for u in self._values["IGNORE_USERS"]})
         object.__setattr__(self, "sleep_exclude", {int(g) for g in self._values["SLEEP_EXCLUDE"]})
         object.__setattr__(self, "memory_optout", {int(u) for u in self._values["MEMORY_OPTOUT"]})
+        problem = prefix_problem(self._values["COMMAND_PREFIX"])
+        if problem:
+            default = OPTIONS["COMMAND_PREFIX"].default
+            log.warning("COMMAND_PREFIX: %s, using %r", problem, default)
+            self._values["COMMAND_PREFIX"] = default
 
     @classmethod
     def from_dict(cls, values=None, paths=None):
@@ -198,6 +214,22 @@ class Settings:
         write_atomic(self.paths.config, text, newline)
         self._values[key] = list(values)
 
+    def save_value(self, key, value):
+        body, newline = read_text(self.paths.config)
+        lines = body.split("\n")
+        doc = OPTIONS[key].doc
+        line = f"{key}: {template.value(value)}" + (f" # {doc}" if doc else "")
+        span = yaml_key_span(lines, key)
+        if span:
+            lines[span[0]] = line
+        else:
+            lines.append(line)
+        text = "\n".join(lines)
+        if (yaml.safe_load(text) or {}).get(key) != value:
+            raise ConfigError(f"couldn't write {key} to {self.paths.config}")
+        write_atomic(self.paths.config, text, newline)
+        self._values[key] = value
+
 
 def _read_yaml(path):
     try:
@@ -242,4 +274,4 @@ def _move_secrets(paths, values):
     log.info("moved your token and api keys from %s to %s", paths.config.name, paths.keys.name)
 
 
-__all__ = ["SECRETS", "ConfigError", "Settings", "coerce"]
+__all__ = ["SECRETS", "ConfigError", "Settings", "coerce", "prefix_problem"]

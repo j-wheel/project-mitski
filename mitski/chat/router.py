@@ -17,20 +17,11 @@ class MessageRouter(Component):
             self.state.chan_log[msg.channel.id].append((msg.id, msg.author.id))
         if not self._from_a_person(msg):
             return
+        if await self.app.admin.dispatch(msg):
+            return
         if self.cfg.LOG_CHANNEL and msg.channel.id == self.cfg.LOG_CHANNEL:
-            await self._admin_channel(msg)
             return
         is_dm = isinstance(msg.channel, discord.DMChannel)
-        if (is_dm or self.messages.allowed_channel(msg.channel)) and self.app.privacy.wants(msg):
-            await self.app.privacy.handle(msg)
-            return
-        if (
-            is_dm
-            and msg.content.startswith("!")
-            and self.app.admin.trusted(msg.author)
-            and await self.app.admin.settings(msg)
-        ):
-            return
         if self.app.owner.is_owner(msg.author):
             self.app.owner.seen(short_name(msg.author))
         if is_dm:
@@ -46,11 +37,6 @@ class MessageRouter(Component):
         if author.bot or msg.type not in NORMAL_TYPES or author.id in self.cfg.ignored:
             return False
         return self.me is not None and author.id != self.me.id
-
-    async def _admin_channel(self, msg):
-        admin = self.app.admin
-        if not await admin.settings(msg) and not await admin.orders(msg):
-            await self.memory.command(msg)
 
     def _reply(self, msg, mode):
         self.memory.touch(msg.author, msg.content)

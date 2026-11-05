@@ -13,7 +13,7 @@ from mitski.chat import convo, shape
 from mitski.chat.addressing import QUESTIONY
 from mitski.chat.messages import clean
 from mitski.chat.patterns import LOW_EFFORT, NEVER, PING_TAG, ROBOTIC
-from mitski.chat.policy import AI_ADMISSION, HONESTY_NOTE, asks_if_bot, explicit
+from mitski.chat.policy import explicit
 from mitski.core import logs, voice
 from mitski.core.component import Component
 from mitski.core.metrics import Metrics
@@ -76,7 +76,6 @@ class Reply:
     sent: list = field(default_factory=list)
     outcome: str = "dropped"
     adult: bool = False
-    honest: bool = False
 
     @property
     def guild(self):
@@ -437,9 +436,6 @@ class ReplyPipeline(Component):
         await self.app.ages.settled(target.author)
         authors = list({m.author.id: m.author for m in ctx.everything if m.author.id != self.me.id}.values())
         reply.adult = self.app.policy.adult_ok(reply.channel, minors=situation.minors_among(authors))
-        reply.honest = asks_if_bot(reply.said)
-        if reply.honest:
-            reply.extras.append(HONESTY_NOTE.format(name=self.messages.call(target.author)))
         reply.persona = situation.persona(
             target.author, reply.guild, full=mode != "ambient", channel=reply.channel, people=authors
         )
@@ -454,7 +450,7 @@ class ReplyPipeline(Component):
         reply.lines = drafts.tidy(reply.text, channel_id, ctx.others)
         seen = self._seen(reply)
         problem = (
-            drafts.problem(reply.lines, seen, reply.honest, reply.adult, self._asked_directly(reply))
+            drafts.problem(reply.lines, seen, False, reply.adult, self._asked_directly(reply))
             if reply.lines
             else None
         )
@@ -506,14 +502,13 @@ class ReplyPipeline(Component):
                 temperature=min(1.3, self.cfg.TEMPERATURE + 0.2),
             )
         lines = drafts.tidy(text, reply.channel.id, reply.ctx.others)
-        if lines and drafts.problem(lines, seen, reply.honest, reply.adult, direct):
+        if lines and drafts.problem(lines, seen, False, reply.adult, direct):
             copied = set(drafts.echoed(lines, seen))
             kept = [
                 ln
                 for ln in lines
                 if ln not in copied
                 and not ROBOTIC.search(ln)
-                and (reply.honest or not AI_ADMISSION.search(ln))
                 and (reply.adult or not explicit(ln))
                 and not (direct and voice.opens_with_she(ln))
             ]

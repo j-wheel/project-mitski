@@ -5,10 +5,10 @@ from datetime import datetime
 import discord
 import yaml
 
-from mitski.config import ConfigError
+from mitski.admin.registry import help_text, parse
+from mitski.config import ConfigError, prefix_problem
 from mitski.core import logs
 from mitski.core.component import Component
-from mitski.core.text import snowflakes
 from mitski.reminders.timing import describe
 from mitski.social.away import ALL
 
@@ -18,13 +18,7 @@ CHUNK = 1900
 HOURS = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d+)?)(?![\d.])")
 SMALL_NUMBER = re.compile(r"(?<!\d)\d{1,6}(?!\d)")
 CANCEL_WORDS = re.compile(r"\b(?:cancel|remove|delete|forget)\b")
-HELP = (
-    "-# `!addchannel <id ...>` · `!delchannel <id ...>` · `!listchannels` · `!ignoreuser <id ...>` · "
-    "`!unignoreuser <id ...>` · `!listusers` · `!sleep <server> [hours]` · `!wake <server|all>` · "
-    "`!sleepexclude <server ...>` · `!sleepinclude <server ...>` · `!listsleep` · `!reminders [cancel <n>]` · "
-    "`!routine` · `!busy <min> [what]` · `!free [min]` · `!stats`"
-)
-ORDERS_HELP = "-# `!orders add <rule>` · `!orders forget <n>` · `!orders clear` · `!quiet <min|off> [server id]`"
+MEMORY_COMMANDS = {"mem", "forget", "note", "set"}
 
 
 @dataclass(frozen=True)
@@ -47,52 +41,24 @@ NO_SLEEP = LiveList(
     "- can sleep in {} again",
     "{} wasn't excluded",
 )
-ALIASES = {
-    "addchannel": ("!addchannel", "!addchannels"),
-    "delchannel": ("!delchannel", "!delchannels", "!removechannel"),
-    "listchannels": ("!listchannels", "!listchannel", "!channels"),
-    "ignoreuser": ("!ignoreuser", "!ignoreusers"),
-    "unignoreuser": ("!unignoreuser", "!unignoreusers"),
-    "listusers": ("!listusers", "!ignored"),
-    "sleepexclude": ("!sleepexclude", "!nosleep"),
-    "sleepinclude": ("!sleepinclude",),
-    "listsleep": ("!listsleep", "!sleepstatus"),
-    "sleep": ("!sleep",),
-    "wake": ("!wake",),
-    "reminders": ("!reminders",),
-    "routine": ("!routine",),
-    "busy": ("!busy",),
-    "free": ("!free",),
-    "stats": ("!stats",),
-}
-COMMANDS = {alias: name for name, aliases in ALIASES.items() for alias in aliases}
 NEEDS_IDS = {"addchannel", "delchannel", "ignoreuser", "unignoreuser", "sleepexclude", "sleepinclude", "sleep"}
 
 
-@dataclass
-class Invocation:
-    cmd: str
-    name: str
-    rest: str
-    ids: list
-
-
-def parse(text):
-    text = (text or "").strip()
-    cmd = text.split(maxsplit=1)[0].lower() if text else ""
-    name = COMMANDS.get(cmd)
-    if name is None:
-        return None
-    rest = text[len(cmd) :]
-    return Invocation(cmd, name, rest, snowflakes(rest))
+def pieces(text, size=CHUNK):
+    while len(text) > size:
+        at = text.rfind("\n\n", 0, size)
+        at = at if at > 0 else text.rfind("\n", 0, size)
+        at = at if at > 0 else size
+        yield text[:at]
+        text = text[at:].lstrip("\n")
+    if text:
+        yield text
 
 
 class AdminCommands(Component):
-    def trusted(self, user):
-        return self.app.owner.is_owner(user) or user.id in self.memory.admins
-
-    def allowed(self, user):
-        return self.trusted(user) or not self.memory.admins
+    def can_use(self, msg):
+        where = self.cfg.COMMAND_CHANNEL
+        return self.app.owner.is_owner(msg.author) and (not where or msg.channel.id == where)
 
     def guild_label(self, gid):
         g = self.messages.guild(gid)
@@ -116,12 +82,18 @@ class AdminCommands(Component):
         self.state.forget_user(uid)
         return self.memory.people.pop(str(uid), None) is not None
 
-    async def settings(self, msg):
-        call = parse(msg.content)
+    async def dispatch(self, msg):
+        call = parse(msg.content, self.cfg.COMMAND_PREFIX)
         if call is None:
             return False
-        if not self.allowed(msg.author):
-            return True
+        if self.can_use(msg):
+            await self._run(call, msg.channel)
+        return True
+
+    async def _run(self, call, channel):
+        if call.name in MEMORY_COMMANDS:
+            await self.memory.command(channel, call.name, call.rest.split())
+            return
         try:
             out = await getattr(self, f"_{call.name}")(call)
         except (OSError, ValueError, yaml.YAMLError, ConfigError) as e:
@@ -131,12 +103,12 @@ class AdminCommands(Component):
             out.append(f"give me one or more ids, like `{call.cmd} 123456789012345678`")
         elif call.name in NEEDS_IDS:
             log.info("%s %s", call.cmd, " ".join(map(str, call.ids)))
-        await self._reply(msg.channel, "\n".join(out) + "\n" + HELP)
-        return True
+        await self.reply(channel, "\n".join(out))
 
-    async def _reply(self, channel, text):
-        for i in range(0, len(text), CHUNK):
-            await channel.send(text[i : i + CHUNK], allowed_mentions=discord.AllowedMentions.none())
+    async def reply(self, channel, text):
+        for piece in pieces(text):
+            sent = await channel.send(piece, allowed_mentions=discord.AllowedMentions.none())
+            self.state.command_replies.add(sent.id)
 
     def _add(self, spec, live, ids, label, refuse=None, after=None):
         saved, out = self.cfg.saved_list(spec.key), []
@@ -242,7 +214,7 @@ class AdminCommands(Component):
         if not call.ids and "all" in call.rest.lower():
             targets = [int(g) for g in list(self.app.away.data["sleep"])]
         if not targets:
-            return ["give me a server id, or `!wake all`"]
+            return [f"give me a server id, or `{call.cmd} all`"]
         return [f"{'woke up' if self.app.away.wake(g) else 'already awake'} in {self.guild_label(g)}" for g in targets]
 
     async def _reminders(self, call):
@@ -278,19 +250,28 @@ class AdminCommands(Component):
     async def _stats(self, call):
         return [self.app.metrics.report(), self.state.stats(), f"{len(self.app.tasks)} background tasks running"]
 
-    async def orders(self, msg):
-        text = msg.content.strip()
-        cmd, *args = text.split() or [""]
-        cmd = cmd.lower()
-        if cmd not in ("!orders", "!quiet"):
-            return False
-        if not self.allowed(msg.author):
-            return True
-        reply = self._quiet(args) if cmd == "!quiet" else self._orders(args)
-        await msg.channel.send(reply[:CHUNK], allowed_mentions=discord.AllowedMentions.none())
-        return True
+    async def _help(self, call):
+        return [help_text(self.cfg.COMMAND_PREFIX)]
 
-    def _quiet(self, args):
+    async def _prefix(self, call):
+        new = call.rest.strip()
+        if not new:
+            return [f"the prefix is `{self.cfg.COMMAND_PREFIX}`, change it with `{call.cmd} <new>`"]
+        problem = prefix_problem(new)
+        if problem:
+            return [problem]
+        self.cfg.COMMAND_PREFIX = new
+        self.cfg.save_value("COMMAND_PREFIX", new)
+        return [f"the prefix is now `{new}`, like `{new}help`"]
+
+    async def _forgetme(self, call):
+        return [await self.app.privacy.forget_me(self.app.owner.id)]
+
+    async def _rememberme(self, call):
+        return [await self.app.privacy.remember_me(self.app.owner.id)]
+
+    async def _quiet(self, call):
+        args = call.rest.split()
         server = next((self.messages.guild(int(a)) for a in args if len(a) >= 15 and a.isdigit()), None)
         rest = [a for a in args if not (len(a) >= 15 and a.isdigit())]
         where = server.name if server is not None else "every server"
@@ -299,22 +280,22 @@ class AdminCommands(Component):
                 self.app.away.unquiet_everywhere()
             else:
                 self.app.away.unquiet(server.id)
-            return f"she can talk again in {where}"
+            return [f"she can talk again in {where}"]
         mins = int(rest[0]) if rest and rest[0].isdigit() else 30
         self.app.away.quiet(server.id if server is not None else ALL, mins)
-        return f"completely quiet in {where} for {mins} min"
+        return [f"completely quiet in {where} for {mins} min"]
 
-    def _orders(self, args):
-        owner = self.app.owner
+    async def _orders(self, call):
+        args, owner = call.rest.split(), self.app.owner
         verb = args[0].lower() if args else ""
         if verb == "add" and len(args) > 1:
             o = owner.add_order(" ".join(args[1:]))
-            return f"+ order {o['id']}: {o['text']}" if o else "she already has that one"
+            return [f"+ order {o['id']}: {o['text']}" if o else "she already has that one"]
         if verb in ("forget", "remove", "drop") and len(args) > 1:
             gone = owner.drop_orders(re.findall(r"\d+", " ".join(args[1:])))
-            return "\n".join(f"- order {o['id']}: {o['text']}" for o in gone) or "no such order"
+            return ["\n".join(f"- order {o['id']}: {o['text']}" for o in gone) or "no such order"]
         if verb == "clear":
             owner.drop_orders([o["id"] for o in owner.data["orders"]])
-            return "all orders cleared"
+            return ["all orders cleared"]
         listing = owner.orders_listing()
-        return f"**standing orders from {self.app.situation.owner_call()}**\n{listing or 'none'}\n{ORDERS_HELP}"
+        return [f"**standing orders from {self.app.situation.owner_call()}**\n{listing or 'none'}"]

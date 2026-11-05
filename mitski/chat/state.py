@@ -44,6 +44,7 @@ class ChatState:
         self.dm_rolled = {}
         self.dm_promised = {}
         self.dm_unanswered = BoundedSet(2000)
+        self.command_replies = BoundedSet(2000)
 
     def channel_busy(self, channel_id):
         lock = self.channel_locks.get(channel_id)

@@ -14,7 +14,9 @@ def startup_report(app):
     lines = [
         f"logged in as {app.user} ({app.user.id})",
         f"channels: {sorted(cfg.channels) or 'none set'}",
-        f"log channel: {cfg.LOG_CHANNEL or 'off'} | gifs: {_on(cfg.GIPHY_KEY)} | "
+        f"log channel: {cfg.LOG_CHANNEL or 'off'} | commands: "
+        + (f"{cfg.COMMAND_PREFIX} in {cfg.COMMAND_CHANNEL or 'any channel'}" if owner.active else "off, no OWNER_ID")
+        + f" | gifs: {_on(cfg.GIPHY_KEY)} | "
         f"dms: {'on' if cfg.DM_ENABLED else 'friends only' if cfg.DM_ENABLED_FRIEND else 'off'} | "
         f"routine: {_on(cfg.ROUTINE)} | memory: {f'{len(memory.people)} people' if cfg.MEMORY else 'off'}",
         f"profiles: {_on(cfg.PROFILES)} | reactions: {_on(cfg.REACTIONS)} | {emojis} emojis, {stickers} stickers | "

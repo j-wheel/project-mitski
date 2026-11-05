@@ -50,28 +50,41 @@ async def test_she_doesnt_start_dms_by_default(world):
 
 
 async def test_forgetme_wipes_and_stops_memory(world):
-    anna = world.people["anna"]
+    owner = world.owner
     world.app.cfg.MEMORY = True
     world.app.memory.enabled = True
-    world.app.memory.touch(anna, "hi im anna")
-    assert world.app.memory.get(anna.id) is not None
-    await world.send(anna, "!forgetme", to_her=False)
-    assert world.app.memory.get(anna.id) is None
-    world.app.memory.touch(anna, "i live in lisbon")
-    assert str(anna.id) not in world.app.memory.people
+    world.app.memory.touch(owner, "hi im the owner")
+    assert world.app.memory.get(owner.id) is not None
+    await world.send(owner, "!forgetme", to_her=False)
+    assert world.app.memory.get(owner.id) is None
+    world.app.memory.touch(owner, "i live in lisbon")
+    assert str(owner.id) not in world.app.memory.people
     saved = yaml.safe_load(world.app.cfg.paths.config.read_text(encoding="utf-8"))
-    assert saved["MEMORY_OPTOUT"] == [anna.id]
+    assert saved["MEMORY_OPTOUT"] == [owner.id]
     assert "forgot" in world.channel.messages[-1].content
-    await world.send(anna, "!rememberme", to_her=False)
-    assert anna.id not in world.app.cfg.memory_optout
+    await world.send(owner, "!rememberme", to_her=False)
+    assert owner.id not in world.app.cfg.memory_optout
 
 
 async def test_forgetme_works_in_dms(world):
-    bob = world.people["bob"]
-    dm = FakeDM(world.client, bob)
-    await world.app.router.route(FakeMessage(dm, bob, "!forgetme"))
+    dm = FakeDM(world.client, world.owner)
+    await world.app.router.route(FakeMessage(dm, world.owner, "!forgetme"))
     await settle(world.app)
-    assert bob.id in world.app.cfg.memory_optout
+    assert world.owner.id in world.app.cfg.memory_optout
+
+
+async def test_forgetme_from_anyone_else_is_ignored_but_old_optouts_still_hold(world):
+    anna, bob = world.people["anna"], world.people["bob"]
+    world.app.cfg.MEMORY = True
+    world.app.memory.enabled = True
+    world.app.memory.touch(anna, "hi im anna")
+    await world.send(anna, "!forgetme", to_her=False)
+    assert world.app.memory.get(anna.id) is not None
+    assert anna.id not in world.app.cfg.memory_optout
+    assert world.client.sent == []
+    world.app.cfg.memory_optout.add(bob.id)
+    world.app.memory.touch(bob, "i live in lisbon")
+    assert str(bob.id) not in world.app.memory.people
 
 
 async def test_recall_keeps_private_details_out(world):

@@ -2,6 +2,7 @@ import re
 
 import discord
 
+from mitski.admin.registry import parse
 from mitski.chat.patterns import (
     ANY_URL,
     CHANNEL_MENTION,
@@ -105,6 +106,8 @@ class MessageView(Component):
         if m.type not in NORMAL_TYPES:
             return False
         if m.author.bot and m.author.id != self.me.id:
+            return False
+        if m.id in self.state.command_replies or parse(m.content, self.cfg.COMMAND_PREFIX) is not None:
             return False
         return bool(self.text(m))
 

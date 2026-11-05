@@ -22,7 +22,9 @@ SECTIONS = (
             Option(
                 "CHANNELS", [], "channel ids she talks in (!addchannel / !delchannel / !listchannels change this live)"
             ),
-            Option("LOG_CHANNEL", 0, "channel id for the relay log and the ! commands, 0 = off"),
+            Option("LOG_CHANNEL", 0, "channel id for the relay log, 0 = off"),
+            Option("COMMAND_CHANNEL", 0, "the only channel commands work in, 0 = they work anywhere, dms too"),
+            Option("COMMAND_PREFIX", "!", "what commands start with (!prefix changes this live)"),
             Option(
                 "PERSONA",
                 "You're hanging out in a discord server with your friends. You're friendly, easygoing and a bit funny, you have your own opinions, and you're happy to talk about almost anything. You type like a real person in chat: short, casual messages, often a few quick ones in a row, and you usually don't end messages with a period. Always stay in character.",
@@ -65,7 +67,7 @@ SECTIONS = (
             Option(
                 "OWNER_ID",
                 0,
-                'discord user id: she does what they ask, follows their standing orders ("stop pinging sam"), and they can tell her to be quiet, change her status or dm someone',
+                'discord user id: she does what they ask, follows their standing orders ("stop pinging sam"), and they can tell her to be quiet, change her status or dm someone. the only person who can use the commands, 0 = nobody can',
             ),
             Option(
                 "OWNER_NOTE",
@@ -342,11 +344,6 @@ SECTIONS = (
                 "remember what she says about herself, so her backstory stays consistent (data/memory.db)",
             ),
             Option("SELF_MAX", 30, "facts kept about herself"),
-            Option(
-                "MEMORY_ADMINS",
-                [],
-                "user ids allowed to use the ! commands in the log channel (besides her owner), empty = anyone there",
-            ),
         ),
     ),
     Section(
@@ -558,7 +555,7 @@ SECTIONS = (
             Option(
                 "MEMORY_OPTOUT",
                 [],
-                "user ids she keeps no memory about (!forgetme / !rememberme change this live, anyone can use them)",
+                "user ids she keeps no memory about (!forgetme / !rememberme change this live for her owner, edit this list for anyone else)",
             ),
             Option(
                 "MEMORY_RETENTION_DAYS",

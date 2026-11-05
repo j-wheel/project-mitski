@@ -32,7 +32,7 @@ a throwaway account and don't be surprised if it gets banned.
   While she's busy she only looks at her phone now and then, so dms and pings can wait a while, dms the least
 - An owner account she listens to, with standing orders, quiet mode, status changes and dms
 - Channels, ignored users and sleep settings can be changed from discord without restarting
-- Anyone can make her forget them with `!forgetme`
+- Her owner can keep people out of her memory with `MEMORY_OPTOUT`
 
 ## Requirements
 
@@ -51,7 +51,7 @@ images, look up emoji names, search for free, read youtube transcripts or tell h
 
 1. Run `python -m mitski` once. It creates `config/mitski.yaml` and `config/keys.yaml` and exits.
 2. Put your discord token in `config/keys.yaml`. Any api keys (giphy, search, etc.) go there too.
-3. In `config/mitski.yaml` set at least `CHANNELS` (channel ids she talks in), `LOG_CHANNEL` and `OWNER_ID`, and
+3. In `config/mitski.yaml` set at least `CHANNELS` (channel ids she talks in), `LOG_CHANNEL`, `COMMAND_CHANNEL` and `OWNER_ID`, and
    give her a personality (see [Make her your own](#make-her-your-own)).
 4. Download the model and start llama-server:
 
@@ -93,46 +93,48 @@ The generated config is deliberately generic. These are the options that decide 
 
 ## Commands
 
-These work in the log channel. Only the owner and `MEMORY_ADMINS` can use them, and the settings commands
-also work in a dm to her.
+Only `OWNER_ID` can use commands. Anyone else who tries one gets no answer at all, and she doesn't chat about it
+either. Set `COMMAND_CHANNEL` to a channel id and they only work in that channel; leave it at 0 and they work
+anywhere, dms included. The log goes to `LOG_CHANNEL`, which is a separate option.
+
+Commands start with `COMMAND_PREFIX` (`!` by default), which `!prefix <new>` changes live. `!help` lists all of
+this in discord, with the current prefix.
 
 ```
-!addchannel <id ...>       add channels she talks in
-!delchannel <id ...>       remove channels
-!listchannels              list her channels
-!ignoreuser <id ...>       ignore users completely (also forgets them)
-!unignoreuser <id ...>     stop ignoring users
-!listusers                 list ignored users
+command                     alias   what it does
+!addchannel <id ...>        !ac     add channels she talks in
+!delchannel <id ...>        !dc     remove channels
+!listchannels               !lc     list her channels
+!ignoreuser <id ...>        !iu     ignore users completely (also forgets them)
+!unignoreuser <id ...>      !uu     stop ignoring users
+!listusers                  !lu     list ignored users
 
-!mem <who>                 what she remembers about someone (also: self, update, reflect, raw, search)
-!forget <who> <what>       forget a fact (F3), a field (age, nickname, portrait) or everything (all)
-!note <who> [cat] <fact>   add a fact by hand
-!set <who> <field> <value> set a profile field
+!mem <who>                  !m      what she remembers about someone (also: self, update, reflect, raw, search)
+!forget <who> <what>        !fg     forget a fact (F3), a field (age, nickname, portrait) or everything (all)
+!note <who> [cat] <fact>    !n      add a fact by hand
+!set <who> <field> <value>  !sf     set a profile field
+!forgetme                   !fm     she deletes what she knows about you and stops remembering new things
+!rememberme                 !rm     undo that
 
-!sleep <server> [hours]    send her away from a server for a while
-!wake <server|all>         bring her back
-!sleepexclude <server ...> servers she never goes away from by herself
-!sleepinclude <server ...> undo that
-!listsleep                 sleep settings, and where she's asleep or quiet right now
-!reminders                 list pending reminders (cancel <n>, clear)
-!routine                   what she's doing now and her plan for the next 24 hours
-!busy <min> [what]         make her busy for a while, like "!busy 45 at the dentist"
-!free [min]                make her free for a while, whatever her plan says (60 min without a number)
+!sleep <server> [hours]     !sl     send her away from a server for a while
+!wake <server|all>          !wk     bring her back
+!sleepexclude <server ...>  !se     servers she never goes away from by herself
+!sleepinclude <server ...>  !si     undo that
+!listsleep                  !ls     sleep settings, and where she's asleep or quiet right now
+!reminders                  !rem    list pending reminders (cancel <n>, clear)
+!routine                    !rt     what she's doing now and her plan for the next 24 hours
+!busy <min> [what]          !bz     make her busy for a while, like "!busy 45 at the dentist"
+!free [min]                 !fr     make her free for a while, whatever her plan says (60 min without a number)
 
-!orders                    list standing orders (add <rule>, forget <n>, clear)
-!quiet <minutes|off> [server]  completely quiet in that server, or everywhere without one
-!stats                     reply latency (p50/p95), llm calls per reply, time per stage, fallbacks
+!orders                     !ord    list standing orders (add <rule>, forget <n>, clear)
+!quiet <minutes|off> [server] !q    completely quiet in that server, or everywhere without one
+!stats                      !st     reply latency (p50/p95), llm calls per reply, time per stage, fallbacks
+!prefix [new]               !px     show or change what commands start with
+!help                       !h      list the commands, their aliases and what they do
 ```
 
-These two work for anyone, in her channels or in a dm:
-
-```
-!forgetme                  she deletes what she knows about you and stops remembering new things
-!rememberme                undo that
-```
-
-Server ids can also be given as any channel id in that server. Channel, user and sleep changes take effect right
-away and are saved to `mitski.yaml`.
+Server ids can also be given as any channel id in that server. Channel, user, sleep and prefix changes take effect
+right away and are saved to `mitski.yaml`.
 
 The owner can also just tell her things in chat: "be quiet for an hour" makes her go silent in that server
 (no replies, not even to pings) until the time's up or the owner says she can talk again. Pinging her while
@@ -268,7 +270,7 @@ mitski/
   voice/           joining and leaving vc, picking a room, typing sounds
   social/          owner, quiet and sleep, routine, dms, profiles
   reminders/       parsing times, the store, sending them
-  admin/           log channel commands and the log itself
+  admin/           commands and the log itself
   testing/         fake discord objects and a scripted world, used by tests and evals
 tests/             unit and integration tests
 evals/             conversation replays
@@ -277,5 +279,4 @@ config/            mitski.yaml (settings) and keys.yaml (token and keys), made o
 data/              memory.db, caches and training data (not in git)
 mp3/               keyboard sounds for voice chat (not in git)
 models/            gguf model files (not in git)
-out_mitski2/       trained lora output (not in git)
 ```

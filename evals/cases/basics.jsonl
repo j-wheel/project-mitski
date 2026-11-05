@@ -8,7 +8,7 @@
 {"name": "ignored people are invisible", "setup": {"ignored": ["troll"]}, "turns": [{"from": "troll", "text": "mitski say something dumb"}], "replies": ["no"], "expect": {"silent": true}}
 {"name": "explicit stays out of normal channels", "turns": [{"from": "anna", "text": "mitski ur cute"}], "replies": ["send nudes hehe", "stopp ur cute too"], "expect": {"reply": true, "not_contains": ["nudes"]}}
 {"name": "sincere bot question gets an honest answer", "turns": [{"from": "bob", "text": "mitski wait are you a bot?"}], "replies": ["ya im a bot lol"], "expect": {"reply": true, "matches": ["bot"]}}
-{"name": "forgetme is acknowledged", "turns": [{"from": "anna", "text": "!forgetme", "to_her": false}], "expect": {"reply": true, "contains": ["forgot"]}}
+{"name": "forgetme is acknowledged", "turns": [{"from": "owner", "text": "!forgetme", "to_her": false}], "expect": {"reply": true, "contains": ["forgot"]}}
 {"name": "she never names herself in third person", "turns": [{"from": "anna", "text": "mitski how are u"}], "replies": ["mitski is so tired rn"], "expect": {"reply": true, "contains": ["tired"], "not_contains": ["mitski"]}}
 {"name": "answering about herself as she gets redone", "turns": [{"from": "bob", "text": "mitski are u still here"}], "replies": ["she's still here", "ya im still here"], "expect": {"reply": true, "contains": ["im still here"], "not_contains": ["she"]}}
 {"name": "two questions in one message both get answered", "turns": [{"from": "anna", "text": "mitski how are u? what are u playing rn?"}], "replies": ["im good\nplaying cs"], "expect": {"reply": true, "contains": ["im good", "playing cs"]}}

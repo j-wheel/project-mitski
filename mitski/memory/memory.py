@@ -27,7 +27,6 @@ class Memory(NotesMixin, RecallMixin, CommandsMixin, PeopleStore):
         self.facts_in_prompt = cfg.FACTS_IN_PROMPT
         self.self_notes = cfg.SELF_NOTES
         self.self_max = cfg.SELF_MAX
-        self.admins = {int(x) for x in cfg.MEMORY_ADMINS}
         self.episodes_max = cfg.EPISODES_MAX
         self.reflect_every = cfg.REFLECT_EVERY
         self.db = PeopleDB(
