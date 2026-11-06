@@ -42,6 +42,7 @@ from mitski.report import startup_report
 from mitski.social.ages import AgeGuard
 from mitski.social.away import Away
 from mitski.social.dms import DirectMessages
+from mitski.social.feelings import Feelings
 from mitski.social.owner import Owner, OwnerRequests
 from mitski.social.presence import Profiles
 from mitski.social.privacy import PrivacyCommands
@@ -91,6 +92,7 @@ class App:
         self.llm = LlamaClient(self)
         self.helper = HelperModel(self)
         self.memory = Memory(self)
+        self.feelings = Feelings(self)
 
         self.messages = MessageView(self)
         self.context = ContextBuilder(self)
@@ -221,6 +223,7 @@ class App:
             ("voice", self.voice.run()),
             ("sleep", self.sleep.run()),
             ("routine", self.routine.run()),
+            ("feelings", self.feelings.run()),
             ("reminders", self.scheduler.run()),
         ):
             self.tasks.spawn(loop, name=name)
@@ -228,6 +231,7 @@ class App:
 
     def _load(self):
         self.memory.load()
+        self.feelings.load()
         self.ages.load()
         self.owner.load()
         self.away.load(self.owner.data.get("quiet_until", 0))
@@ -246,6 +250,7 @@ class App:
 
     async def save(self):
         await self.memory.flush()
+        self.feelings.save_if_dirty()
         self.vision.save_if_dirty()
         if self.emojis.dirty:
             self.emojis.save()

@@ -208,7 +208,7 @@ class Brain(Component):
         reply_type = plan.get("reply_type") if plan.get("reply_type") in prompts.REPLY_TYPES else "other"
         length = plan.get("length") if plan.get("length") in prompts.LENGTHS else "short"
         wants = voice.to_you(cut(str(plan.get("wants") or "").strip(), 160), self.messages.own_names())
-        answer = cut(str(plan.get("answer") or "").strip(), 300)
+        answer = cut(str(plan.get("answer") or "").strip(), prompts.BRIEF_MAX)
         if not q.explicit and to_her == "someone_else":
             log.info("%s: not for her (%s)", q.name, wants or "talking to someone else")
             return Thought(to_her=to_her, reply_type=reply_type, wants=wants)
@@ -228,7 +228,7 @@ class Brain(Component):
         if checked and reply_type in prompts.ANSWERY:
             out = await self.app.helper.ask_json(*prompts.brief_request(q, checked, answer))
             brief = clean_brief((out or {}).get("say")) or brief
-        brief = self._in_her_voice(q, brief)
+        brief = self._in_her_voice(q, brief) if reply_type in prompts.PLANNED else ""
         notes = self._notes(q, to_her, reply_type, wants, brief, checked, failed)
         actions = self._actions(q, plan)
         await self._report(
@@ -246,7 +246,7 @@ class Brain(Component):
             notes,
             to_her,
             reply_type,
-            brief if reply_type in prompts.ANSWERY else "",
+            brief,
             wants,
             actions,
             checked=bool(checked),
@@ -278,6 +278,8 @@ class Brain(Component):
             notes.append("You tried to check but couldn't find out, so say you're not sure instead of guessing.")
         if brief and reply_type in prompts.ANSWERY:
             notes.append(prompts.ANSWER_NOTE.format(brief=brief.rstrip(".")))
+        elif brief and reply_type == "story":
+            notes.append(prompts.STORY_NOTE.format(brief=brief.rstrip(".")))
         elif prompts.REPLY_TYPES.get(reply_type):
             notes.append(prompts.REPLY_TYPES[reply_type])
         if to_her == "everyone" and not q.explicit:

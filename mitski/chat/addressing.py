@@ -23,6 +23,13 @@ GREETING_TO = re.compile(
     re.I,
 )
 MAX_PIECES = 8
+LEAD_IN = re.compile(r"\b(?:hey+|hi+|yo+|ok|okay|omg|bro|girl|lol|lmao|ugh|wait|and|but|so|oi|bruh|wtf|damn)\b")
+TRAILING = re.compile(r"\b(?:lol|lmao|lmfao|haha\w*|hehe\w*|xd|fr|ngl|tbh|pls|plz|ok|okay|rn|bro|frfr|istg)\b")
+ABOUT_HER = re.compile(
+    r"^\W*(?:is|was|isn'?t|wasn'?t|has|had|does|did|doesn'?t|didn'?t|'s|s|will|would|can|could|should|might|and|or|"
+    r"said|says|thinks?|seems?|got|gets|always|never|just|really|literally)\b",
+    re.I,
+)
 GROUP_WORDS = set(
     [
         "everyone",
@@ -64,6 +71,14 @@ class Thing:
 def same_topic(a, b):
     words_a, words_b = keywords(a), keywords(b)
     return bool(words_a and words_b) and len(words_a & words_b) / min(len(words_a), len(words_b)) >= 0.5
+
+
+def needs_own_answer(text):
+    """A question or request, not a remark, a reaction or an emoji."""
+    text = clean(text)
+    if not re.search(r"[A-Za-z0-9]", text) or LOW_EFFORT.match(text) or JUST_HI.match(text):
+        return False
+    return bool(QUESTIONY.search(text))
 
 
 def split_questions(text):
@@ -149,20 +164,23 @@ class Addressing(Component):
         return [Thing(piece, m) for m in burst for piece in split_questions(self.messages.text(m))][:MAX_PIECES]
 
     def separate_things(self, pieces, thought):
+        """The separate questions in what someone sent, each needing its own answer. Remarks, reactions and emojis
+        never count: a person answers questions one by one, but reacts to a few remarks in a row as one thing."""
         if len(pieces) < 2:
             return list(pieces)
         if thought.topics:
-            picked = [pieces[i - 1] for i in thought.topics if 1 <= i <= len(pieces)]
-            if picked:
+            picked = self._distinct(pieces[i - 1] for i in thought.topics if 1 <= i <= len(pieces))
+            if len(picked) >= 2:
                 return picked
+        return self._distinct(pieces) or pieces[-1:]
+
+    @staticmethod
+    def _distinct(pieces):
         out = []
         for piece in pieces:
-            text = clean(piece.text)
-            if LOW_EFFORT.match(text) or JUST_HI.match(text) or not QUESTIONY.search(text):
-                continue
-            if not any(same_topic(piece.text, other.text) for other in out):
+            if needs_own_answer(piece.text) and not any(same_topic(piece.text, other.text) for other in out):
                 out.append(piece)
-        return out or pieces[-1:]
+        return out
 
     def juggling(self, channel_id, user_id, window=150):
         now = time.monotonic()
@@ -215,8 +233,55 @@ class Addressing(Component):
             chance = (
                 max(self.cfg.CHIME_IN_CHANCE, 0.6) if self.app.owner.is_owner(msg.author) else self.cfg.CHIME_IN_CHANCE
             )
+            chance *= self.app.feelings.chime_factor(msg.author)
             self.state.chime_rolls[msg.id] = random.random() < chance
         return self.state.chime_rolls[msg.id]
+
+    def aimed_at_her(self, msg, hers=()):
+        """Strictly: was this said TO her? Not near her, not about her to someone else, not to anyone else at all.
+        Used for anything that changes how she feels about someone, where a wrong guess would be unfair."""
+        if isinstance(msg.channel, discord.DMChannel):
+            return True
+        replied_to = getattr(getattr(msg.reference.resolved if msg.reference else None, "author", None), "id", None)
+        if self.target_of(msg) is not None or self.for_someone_else(msg):
+            return False
+        if self.me in msg.mentions or replied_to == self.me.id:
+            return True
+        return self.named_directly(msg.content) or self.answers_her(msg, hers)
+
+    def named_directly(self, text):
+        """Her name used to talk to her ("mitski ur annoying", "hey mitski", "ur so cute mitski"), not to talk
+        about her ("mitski is annoying", "i think mitski is cute"). Only her real names, not pet names."""
+        lowered = clean(text or "").lower()
+        names = {short_name(self.me).lower(), self.me.name.lower(), *self.triggers} - {""}
+        for name in names:
+            for m in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", lowered):
+                before, after = lowered[: m.start()], lowered[m.end() :]
+                if not re.search(r"[a-z0-9]", TRAILING.sub("", after)):
+                    return True
+                if not re.search(r"[a-z0-9]", LEAD_IN.sub("", before)) and not ABOUT_HER.match(after):
+                    return True
+        return False
+
+    def answers_her(self, msg, hers=()):
+        """Their message comes straight after something she said to them, with nobody else talking in between."""
+        events = dict(self.state.chan_log.get(msg.channel.id, ()))
+        last = self.app.sender.last_sent.get(msg.channel.id)
+        for mid in [m.id for m in hers] + ([last] if last else []):
+            events.setdefault(mid, self.me.id)
+        for mid in sorted((m for m in events if m < msg.id), reverse=True):
+            uid = events[mid]
+            if uid == msg.author.id:
+                continue
+            return uid == self.me.id and self.state.addressed.get(mid) == msg.author.id
+        return False
+
+    def target_of(self, msg):
+        """The other person a message is aimed at (a reply to them or a ping), or None."""
+        author = getattr(msg.reference.resolved if msg.reference else None, "author", None)
+        if author is not None and author.id not in (self.me.id, msg.author.id):
+            return author
+        return next((u for u in msg.mentions if u.id not in (self.me.id, msg.author.id)), None)
 
     def is_follow_up(self, msg):
         key = (msg.channel.id, msg.author.id)

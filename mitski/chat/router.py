@@ -40,6 +40,7 @@ class MessageRouter(Component):
 
     def _reply(self, msg, mode):
         self.memory.touch(msg.author, msg.content)
+        self.app.feelings.heard(msg, aimed=mode == "dm" or self.app.addressing.aimed_at_her(msg))
         self.app.ages.look_up(msg.author)
         self.app.pipeline.queue(msg.channel, mode, msg)
 
@@ -91,7 +92,11 @@ class MessageRouter(Component):
         self.memory.overheard(msg.author, msg.content, msg.channel)
         if self.app.ambient.should_join(cid):
             self.app.pipeline.join_in(msg.channel, msg)
-        elif self.cfg.REACTIONS and self.app.routine.free and random.random() < self.cfg.AMBIENT_REACT_CHANCE:
+        elif (
+            self.cfg.REACTIONS
+            and self.app.routine.free_in(getattr(msg.guild, "id", None))
+            and random.random() < self.cfg.AMBIENT_REACT_CHANCE
+        ):
             self.app.tasks.spawn(self.app.reactions.ambient(msg), name=f"ambient-react-{msg.id}")
 
     def typing(self, channel, user):

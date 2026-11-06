@@ -299,11 +299,17 @@ class Voice(Component):
             await asyncio.sleep(self.tick * random.uniform(0.8, 1.2))
 
     async def _maybe_join(self):
-        if not self.can_join() or not self.app.routine.can_hang_out:
+        if not self.can_join():
             return
         now = time.time()
         late = self.app.clock.late
-        channels = [c for g in self.app.her_guilds() if not self._away(g.id) for c in g.voice_channels if joinable(c)]
+        channels = [
+            c
+            for g in self.app.her_guilds()
+            if not self._away(g.id) and self.app.routine.can_hang_out_in(g.id)
+            for c in g.voice_channels
+            if joinable(c)
+        ]
         random.shuffle(channels)
         for channel in channels:
             ids = self.people(channel)
@@ -333,8 +339,9 @@ class Voice(Component):
                 log.info("lost the voice connection")
                 self._reset(self.cfg.VOICE_COOLDOWN_MIN * 60)
             return
-        if not self.app.routine.can_hang_out:
-            await self.leave(f"she's {self.app.routine.doing()}")
+        gid = vc.channel.guild.id
+        if not self.app.routine.can_hang_out_in(gid):
+            await self.leave(f"she's {self.app.routine.doing(gid)}")
             return
         now = time.time()
         ids = self.people(vc.channel)

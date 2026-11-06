@@ -165,7 +165,21 @@ class Routine(Component):
         self.planner.ensure(now)
         return "planning her day again, ask for her routine again in a minute or two"
 
-    def spell(self, now=None):
+    def awake_here(self, guild_id):
+        """Servers she's set never to sleep in (SLEEP_EXCLUDE, !sleepexclude) ignore her routine's sleep too."""
+        if guild_id is None:
+            return False
+        away = getattr(self.app, "away", None)
+        exclude = away.exclude if away is not None else self.cfg.sleep_exclude
+        return int(guild_id) in exclude
+
+    def spell(self, now=None, guild_id=None):
+        spell = self._spell(now)
+        if spell is not None and spell.level == ASLEEP and self.awake_here(guild_id):
+            return None
+        return spell
+
+    def _spell(self, now=None):
         if not self.on:
             return None
         now = now or self.now()
@@ -196,12 +210,22 @@ class Routine(Component):
     def can_hang_out(self):
         return self.level in (None, GAMING)
 
-    def doing(self):
-        spell = self.spell()
+    def free_in(self, guild_id):
+        return self.spell(guild_id=guild_id) is None
+
+    def level_in(self, guild_id):
+        spell = self.spell(guild_id=guild_id)
+        return spell.level if spell else None
+
+    def can_hang_out_in(self, guild_id):
+        return self.level_in(guild_id) in (None, GAMING)
+
+    def doing(self, guild_id=None):
+        spell = self.spell(guild_id=guild_id)
         return spell.what if spell else ""
 
-    def looking(self):
-        return self.free or self.stamp() < self.around_until
+    def looking(self, guild_id=None):
+        return self.free_in(guild_id) or self.stamp() < self.around_until
 
     def _look_gap(self, spell):
         low, high = self.cfg.ROUTINE_LOOK_GAMING if spell.level == GAMING else self.cfg.ROUTINE_LOOK_BUSY
@@ -221,8 +245,8 @@ class Routine(Component):
             longest = self.sat_down + LONGEST_SITTING
             self.around_until = min(max(self.around_until, t + random.uniform(*KEEP_AROUND_SEC)), longest)
 
-    def notice_at(self, kind, owner=False):
-        spell, t = self.spell(), self.stamp()
+    def notice_at(self, kind, owner=False, guild_id=None):
+        spell, t = self.spell(guild_id=guild_id), self.stamp()
         if spell is None:
             return t
         if owner and spell.level == ASLEEP:
@@ -241,8 +265,8 @@ class Routine(Component):
                 return PRESENCE[level]
         return self.cfg.STATUS
 
-    def note(self):
-        spell = self.spell()
+    def note(self, guild_id=None):
+        spell = self.spell(guild_id=guild_id)
         if spell is None:
             return self.planner.today_note(self.now()) if self.on else ""
         if spell.level == ASLEEP:
@@ -298,6 +322,8 @@ class Routine(Component):
         await self.app.profiles.apply()
         if spell is not None and spell.level != GAMING:
             for guild in self.app.her_guilds():
+                if spell.level == ASLEEP and self.awake_here(guild.id):
+                    continue
                 if not self.app.away.state(guild.id):
                     await self.app.sleep.say_bye(guild)
 

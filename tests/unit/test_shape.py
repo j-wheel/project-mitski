@@ -4,7 +4,8 @@ from collections import Counter
 import pytest
 
 from mitski.chat import shape
-from mitski.chat.addressing import split_questions
+from mitski.chat.addressing import needs_own_answer, split_questions
+from mitski.chat.pipeline import too_few_answers
 from mitski.chat.style import Style
 
 PLAIN = {"SLANG": 0, "LOWERCASE": False, "NO_APOSTROPHES": 0, "SPLIT_CHANCE": 0, "STRETCH_CHANCE": 0, "FLAIR_CHANCE": 0}
@@ -76,6 +77,30 @@ def test_a_longer_reply_mostly_goes_out_as_one_proper_message():
 )
 def test_split_questions(text, pieces):
     assert split_questions(text) == pieces
+
+
+@pytest.mark.parametrize(
+    ("text", "own"),
+    [
+        ("what are u playing rn?", True),
+        ("can you send me the clip", True),
+        ("DONT LEAVE ME I'll get separation anxiety", False),
+        ("😭 😭", False),
+        ("woah she went therapy mode", False),
+        ("lol", False),
+        ("hii", False),
+    ],
+)
+def test_only_questions_and_requests_need_their_own_answer(text, own):
+    assert needs_own_answer(text) is own
+
+
+@pytest.mark.parametrize(
+    ("lines", "questions", "retry"),
+    [(1, 2, True), (1, 3, True), (2, 3, False), (2, 4, True), (3, 3, False), (3, 2, False)],
+)
+def test_texting_merges_answers_so_only_clearly_too_few_gets_a_retry(lines, questions, retry):
+    assert too_few_answers(lines, questions) is retry
 
 
 def test_a_block_puts_a_blank_line_between_answers(make_cfg):

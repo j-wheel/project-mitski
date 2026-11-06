@@ -6,7 +6,7 @@ import re
 import time
 
 from mitski.core import logs, voice
-from mitski.core.text import NEGATIVE, POSITIVE, cut
+from mitski.core.text import cut
 from mitski.memory import activity
 from mitski.memory.dates import (
     DAY,
@@ -170,7 +170,6 @@ class PeopleStore:
         d.setdefault("heard", 0)
         d.setdefault("added_since_tidy", 0)
         d.setdefault("gap_days", 0)
-        d.setdefault("vibe", 0.0)
         d.setdefault("talks", 0)
         d.setdefault("episodes", [])
         d.setdefault("next_eid", max([e["id"] for e in d["episodes"]] or [0]) + 1)
@@ -262,14 +261,15 @@ class PeopleStore:
         d["name"] = self.name_of(user)
         d["username"] = getattr(user, "name", "")
         self.last_user[user.id] = user
+        feelings = getattr(self.app, "feelings", None)
+        if feelings is not None and feelings.people_on:
+            feelings.settle(d, now)
         if now - d["last_seen"] > 2 * 3600:
             d["session_start"] = now
         d["gap_days"] = int((now - d["last_seen"]) // DAY) if now - d["last_seen"] > 3 * DAY else 0
         d["last_seen"] = now
         d["talks"] += 1
         d["since_notes"] += 1
-        pos, neg = len(POSITIVE.findall(text)), len(NEGATIVE.findall(text))
-        d["vibe"] = round(max(-5.0, min(5.0, d["vibe"] * 0.98 + 0.3 * pos - 0.6 * neg)), 2)
         self._fast(d, text)
         self.dirty = True
 
@@ -590,9 +590,12 @@ class PeopleStore:
     def describe(self, d):
         now = time.time()
         lines = [
-            f"**{d.get('name')}** (@{d.get('username', '?')}) · {d['talks']} messages · vibe {d['vibe']} · "
+            f"**{d.get('name')}** (@{d.get('username', '?')}) · {d['talks']} messages · "
             f"last seen {said_ago(d['last_seen'])} · {d['since_notes'] + d.get('heard', 0)} not noted yet"
         ]
+        feelings = getattr(self.app, "feelings", None)
+        if feelings is not None and feelings.people_on:
+            lines.append(feelings.describe_person(d).split("\n")[0].replace(f"**{d.get('name', '?')}** · ", "feels: "))
         for key in list(SLOTS) + ["her_nick"]:
             if key in d["slots"]:
                 s = d["slots"][key]

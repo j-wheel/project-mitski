@@ -71,7 +71,7 @@ async def test_longer_replies_dont_come_back_to_back(world):
 
 
 async def test_no_longer_replies_while_shes_busy(world, monkeypatch):
-    monkeypatch.setattr(type(world.app.routine), "level", property(lambda self: "busy"))
+    monkeypatch.setattr(type(world.app.routine), "can_hang_out_in", lambda self, guild_id: False)
     planner(world, reply_type="describe", length="longer")
     world.replies.append("in class rn, later")
     await world.send(world.people["anna"], "mitski how do suspension bridges actually stay up?")
@@ -85,6 +85,30 @@ async def test_without_her_planner_an_obvious_ask_still_gets_room(world):
     world.app.pipeline.long_at.clear()
     await world.send(world.people["bob"], "mitski u up?")
     assert LONG not in world.prompts[-1]
+
+
+STORY = (
+    "i was at the gym and this guy kept yelling at his own arms during bicep curls, i got so distracted i dropped "
+    "my water bottle on my foot and screamed, and then he asked if i was ok while still curling"
+)
+
+
+async def test_a_story_request_reaches_her_as_the_story_itself(world):
+    planner(world, reply_type="story", length="longer", answer=STORY)
+    world.replies.append("ok so this happened at the gym")
+    await world.send(world.owner, "mitski tell me a long funny story")
+    prompt = world.prompts[-1]
+    assert "What happened, roughly: i was at the gym" in prompt and "still curling" in prompt
+    assert LONG in prompt and "joking around" not in prompt
+    assert world.sent_text() == ["ok so this happened at the gym"]
+
+
+async def test_a_planned_line_for_a_joke_isnt_passed_on_or_logged(world):
+    planner(world, reply_type="joke", answer="some made up thing")
+    world.replies.append("lmaooo")
+    await world.send(world.people["anna"], "mitski ur so slow today")
+    assert "some made up thing" not in world.prompts[-1]
+    assert "They're joking around, play along." in world.prompts[-1]
 
 
 async def test_trivial_messages_skip_planning(world):

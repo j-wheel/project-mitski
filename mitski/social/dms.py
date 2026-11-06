@@ -53,7 +53,7 @@ class DirectMessages(Component):
         return self.cfg.DM_ENABLED or (self.cfg.DM_ENABLED_FRIEND and self.is_friend(user))
 
     def note_exchange(self, user, channel):
-        if not self.may_start_dm(user) or not self.app.routine.free:
+        if not self.may_start_dm(user) or not self.app.routine.free or not self.app.feelings.close_enough_to_dm(user):
             return
         now = time.monotonic()
         times = self.state.exchanges[user.id]

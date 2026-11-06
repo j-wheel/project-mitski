@@ -176,6 +176,35 @@ def test_only_being_asleep_or_busy_stops_hanging_out(routine):
     assert not routine.can_hang_out
 
 
+AWAKE_SERVER, OTHER_SERVER = 111, 222
+
+
+def test_servers_she_never_sleeps_in_ignore_her_routine_sleep(routine):
+    routine.cfg.sleep_exclude.add(AWAKE_SERVER)
+    forced(routine, ASLEEP, "asleep", hours=6)
+    assert routine.free_in(AWAKE_SERVER) and routine.looking(AWAKE_SERVER)
+    assert routine.notice_at("chat", guild_id=AWAKE_SERVER) == routine.stamp()
+    assert "asleep" not in routine.note(AWAKE_SERVER) and routine.can_hang_out_in(AWAKE_SERVER)
+    assert not routine.free_in(OTHER_SERVER) and not routine.looking(OTHER_SERVER)
+    assert routine.notice_at("chat", guild_id=OTHER_SERVER) >= routine.spell().end.timestamp()
+    assert not routine.free and not routine.free_in(None)
+
+
+def test_only_sleep_is_overridden_being_busy_still_counts_there(routine):
+    routine.cfg.sleep_exclude.add(AWAKE_SERVER)
+    forced(routine, BUSY, "in a lecture")
+    assert not routine.free_in(AWAKE_SERVER) and routine.doing(AWAKE_SERVER) == "in a lecture"
+
+
+def test_excluding_a_server_takes_effect_live(routine):
+    forced(routine, ASLEEP, "asleep", hours=6)
+    assert not routine.free_in(AWAKE_SERVER)
+    routine.cfg.sleep_exclude.add(AWAKE_SERVER)
+    assert routine.free_in(AWAKE_SERVER)
+    routine.cfg.sleep_exclude.discard(AWAKE_SERVER)
+    assert not routine.free_in(AWAKE_SERVER)
+
+
 def test_set_free_and_set_busy_override_the_plan(routine):
     routine.set_busy(30, "at the dentist")
     assert routine.doing() == "at the dentist"

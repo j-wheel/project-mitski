@@ -1,4 +1,5 @@
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -11,6 +12,7 @@ from mitski.core import logs
 from mitski.core.component import Component
 from mitski.reminders.timing import describe
 from mitski.social.away import ALL
+from mitski.social.feelings import BOUNDS, EVENTS_KEPT, fresh_regard
 
 log = logs.get("commands")
 
@@ -19,6 +21,7 @@ HOURS = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d+)?)(?![\d.])")
 SMALL_NUMBER = re.compile(r"(?<!\d)\d{1,6}(?!\d)")
 CANCEL_WORDS = re.compile(r"\b(?:cancel|remove|delete|forget)\b")
 MEMORY_COMMANDS = {"mem", "forget", "note", "set"}
+HAND_SET = {"like": "like", "trust": "trust", "chemistry": "spark", "spark": "spark", "hurt": "hurt"}
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,37 @@ class AdminCommands(Component):
             for r in store.upcoming()
         ]
         return [f"**reminders ({len(rows)})**\n" + ("\n".join(rows) or "none")]
+
+    async def _mood(self, call):
+        return [self.app.feelings.report()]
+
+    async def _feel(self, call):
+        words = call.rest.split()
+        if not words:
+            return [f"usage: `{self.cfg.COMMAND_PREFIX}feel <who> [reset | like/trust/chemistry/hurt <number>]`"]
+        uid, d = self.memory.find_person(words[0])
+        if d is None:
+            return [f"she doesn't know anyone called {words[0]}"]
+        feelings, rest = self.app.feelings, [w.lower() for w in words[1:]]
+        out = []
+        if rest[:1] == ["reset"]:
+            d["regard"] = fresh_regard()
+            out.append("reset: back to neutral, like she just met them")
+        elif len(rest) >= 2 and rest[0] in HAND_SET and re.fullmatch(r"-?\d+(\.\d+)?", rest[1]):
+            dim = HAND_SET[rest[0]]
+            r = feelings.regard(d)
+            low, high = BOUNDS[dim]
+            before = r[dim]
+            r[dim] = max(low, min(high, float(rest[1])))
+            if dim == "hurt":
+                r["hurt_t"], r["hurt_why"] = time.time(), "set by hand"
+            r["events"] = (
+                r.get("events", [])
+                + [{"t": time.time(), "kind": "set_by_hand", "i": 1, "d": {dim: r[dim] - before}, "src": "hand"}]
+            )[-EVENTS_KEPT:]
+            out.append(f"{rest[0]} set to {r[dim]:g}")
+        self.memory.dirty = True
+        return [*out, feelings.describe_person(d, int(uid))]
 
     async def _routine(self, call):
         if call.rest.strip().lower() in ("redo", "again", "new"):

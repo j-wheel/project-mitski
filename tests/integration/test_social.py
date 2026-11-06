@@ -3,6 +3,22 @@ import time
 from mitski.testing.fakes import FakeChannel, FakeMessage, settle
 
 
+async def test_in_a_server_she_never_sleeps_in_her_routine_sleep_doesnt_count(world):
+    from datetime import timedelta
+
+    from mitski.social.routine import ASLEEP, Spell
+
+    routine = world.app.routine
+    routine.on = True
+    now = routine.now()
+    routine.forced = Spell(now, now + timedelta(hours=6), ASLEEP, "asleep")
+    world.app.cfg.sleep_exclude.add(world.guild.id)
+    world.replies.append("im up whats good")
+    await world.send(world.people["anna"], "mitski u awake?")
+    assert world.sent_text() == ["im up whats good"]
+    assert "woke you up" not in world.prompts[-1]
+
+
 async def test_a_due_reminder_pings_the_person(world):
     anna = world.people["anna"]
     world.replies.append("hey drink some water")

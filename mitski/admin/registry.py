@@ -42,11 +42,28 @@ GROUPS = (
         ),
     ),
     (
+        "feelings",
+        (
+            Command("mood", ("md",), "", "how she feels right now, and why"),
+            Command(
+                "feel",
+                ("fl", "like"),
+                "<who> [reset | like/trust/chemistry/hurt <n>]",
+                "how she feels about someone and why, or set it by hand",
+            ),
+        ),
+    ),
+    (
         "sleep",
         (
             Command("sleep", ("sl",), "<server> [hours]", "send her away from a server for a while"),
             Command("wake", ("wk",), "<server|all>", "bring her back"),
-            Command("sleepexclude", ("se", "nosleep"), "<server ...>", "servers she never goes away from by herself"),
+            Command(
+                "sleepexclude",
+                ("se", "nosleep"),
+                "<server ...>",
+                "servers she never goes away from by herself, and stays up in even when her routine has her asleep",
+            ),
             Command("sleepinclude", ("si",), "<server ...>", "undo sleepexclude"),
             Command("listsleep", ("ls", "sleepstatus"), "", "sleep settings, and where she's asleep or quiet now"),
         ),

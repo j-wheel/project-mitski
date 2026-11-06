@@ -96,7 +96,12 @@ SECTIONS = (
             Option("SLEEP_HOURS", [1.5, 4], "how long she's away"),
             Option("SLEEP_MAX_PER_DAY", 1, "per server"),
             Option("SLEEP_BYE_CHANCE", 0.6, "chance she says a quick bye first, if she was just talking there"),
-            Option("SLEEP_EXCLUDE", [], "server ids where she never goes to sleep by herself"),
+            Option(
+                "SLEEP_EXCLUDE",
+                [],
+                "server ids where she never goes to sleep by herself, and where her routine's sleep doesn't count "
+                "either (she stays up there)",
+            ),
         ),
     ),
     Section(
@@ -304,6 +309,33 @@ SECTIONS = (
         ),
     ),
     Section(
+        "feelings: how she feels about each person (like, trust, chemistry, hurt) changes how she treats them, and her "
+        "own mood shifts with what happens. !mood and !feel show them",
+        (
+            Option(
+                "FEELINGS",
+                True,
+                "she has feelings about people that grow or sour from how they treat her (needs MEMORY, her memory "
+                "notes judge what happened). false = she treats everyone the same",
+            ),
+            Option("MOOD", True, "her own mood shifts with people, her day and the time, and colours how she talks"),
+            Option("MOOD_SWING", 1.0, "how strongly things move her mood: 0.5 = steady, 1.5 = moody"),
+            Option("LIKE_SPEED", 1.0, "how fast she warms up to people or goes off them"),
+            Option(
+                "LIKE_DAILY_MAX",
+                15,
+                "most her liking for one person can move in a day (out of 100), so nobody can flatter or bully it fast",
+            ),
+            Option("GRUDGE_HOURS", 18, "how long it takes her to get halfway over something someone did to her"),
+            Option(
+                "LEAVE_ON_READ",
+                0.3,
+                "chance she leaves small talk on read from people she really doesn't like (never her owner, never "
+                "when they need help)",
+            ),
+        ),
+    ),
+    Section(
         "memory",
         (
             Option("MEMORY", True, "remember people between conversations (data/memory.db)"),
@@ -341,7 +373,11 @@ SECTIONS = (
                 True,
                 "qwen thinks it through before writing memory notes (who said what, what's new, what changed). runs in the background and pauses whenever someone's waiting on her reply",
             ),
-            Option("MEMORY_THINK_TOKENS", 800, "how long it may think per memory update"),
+            Option(
+                "MEMORY_THINK_TOKENS",
+                1200,
+                "how long it may think per memory update (it also works out how people treated her, for FEELINGS)",
+            ),
             Option(
                 "EPISODES_MAX",
                 30,

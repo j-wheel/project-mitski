@@ -17,13 +17,17 @@ a throwaway account and don't be surprised if it gets banned.
 - Answers when she's pinged, replied to or named, and keeps talking with people for a bit after that
 - Joins in on conversations by herself, less often in busy channels
 - Works out who a message is for and replies, pings or just sends a message so it's clear who she's talking to
-- Answers several messages from one person together, and answers each question when they ask a few different things
+- Answers several messages from one person together: each question when they ask a few different things, and one
+  reaction to the whole thing when it's a few remarks in a row, without repeating their words back
 - Lays a reply out like a person would: a few quick messages, one longer message, or a reply to each question
 - Keeps it short most of the time, but now and then writes a longer reply when the moment calls for it: explaining
   something properly, giving advice, telling a story, or being there for someone (`LONG_REPLIES`). Never while
   she's busy, and not twice in a row in the same channel
 - Lets tiny follow-ups that close a chat ("lol", "ok") go without replying, unless she asked them something
 - Remembers people between conversations (facts, nicknames, what they play and listen to, past chats)
+- Has feelings about people that grow or sour from how they treat her (how much she likes and trusts them, chemistry,
+  and being hurt), and her own mood that shifts through the day. Both change how she talks and acts (see
+  [Her feelings](#her-feelings))
 - Thinks before answering questions: web search, weather, time, math, scrolling back through the chat
 - Looks at images, gifs, stickers and short videos people send
 - Uses the server's emojis and stickers, reacts to messages, sends gifs (giphy)
@@ -96,7 +100,7 @@ The generated config is deliberately generic. These are the options that decide 
   instead of an edit, and how many seconds later.
 - `MAX_LINES`, `LONG_REPLIES`, `LONG_REPLY_COOLDOWN_MIN`: how many messages a reply can be, and whether she
   sometimes writes a longer one when it's called for.
-- `IDENTITY_NOTE`: the rules she always keeps (no assistant talk, stays in character, doesn't lie when someone
+- `IDENTITY_NOTE`: the rules she always keeps (no assistant talk, stays in character, will lie when someone
   sincerely asks if she's a bot). Leave it empty to use the built-in one, which calls her by the discord account's name.
 - `ACTIVITY_TYPE` and `ACTIVITY_TEXT`: what her discord status says she's doing.
 - `ROUTINE_LIFE` and `ROUTINE_PLACE`: who she is day to day and where she lives, which her daily plans are made from
@@ -129,6 +133,55 @@ doesn't change them. Until a day is planned, or if her model can't be reached, s
 `ROUTINE_SLEEP`, `ROUTINE_BUSY`, `ROUTINE_ERRANDS` and `ROUTINE_GAMES`. `!routine` shows what she's doing, her plan for
 the next 24 hours and any upcoming trip, and `!routine redo` throws away today's plan and makes a new one.
 
+Servers in `SLEEP_EXCLUDE` (`!sleepexclude`) don't follow her routine's sleep: while she's asleep everywhere else,
+she's still up and chatting there. Only sleep is overridden, so a lecture or work still keeps her busy there too.
+Her discord status is the same everywhere, so with `ROUTINE_PRESENCE` on it still shows invisible while she sleeps.
+
+## Her feelings
+
+With `FEELINGS` and `MOOD` on (the default), she reacts to people the way a person would, a bit at a time.
+
+**How she feels about each person** is four things, kept with her memory of them:
+
+- **like** (-100 to 100): how fond of them she is, from "can't stand" through neutral to "adore"
+- **trust** (0 to 100): builds slowly (being consistent, keeping their word, opening up to her) and drops fast (lying,
+  broken promises, fake sweet talk)
+- **chemistry** (0 to 100): whether flirting feels natural with them. Always 0 with minors, and pushiness kills it
+- **hurt** (0 to 100): being upset with them right now. It fades (halfway in `GRUDGE_HOURS`), faster if they apologize
+
+It changes in two ways. When someone says something to her, she has a gut reaction straight away (an insult
+stings, a compliment lifts her mood), which only touches her mood and how hurt she is. Then her memory notes
+judge what actually happened, from a fixed list of 28 kinds of moment (shared interests, caring about her,
+opening up, making her laugh, keeping a promise, insults, mocking her, fake affection, pushiness, lying, going after
+her close friends, ...). Every moment has to quote their real message or it's thrown away, and the numbers come from
+the code, not the model.
+
+Only messages that were really said TO her count, for both the gut reaction and the judgment. The code decides
+that, not the model: a dm to her, a ping or a reply to her message, her name used to talk to her ("mitski ur
+annoying", "hey mitski", not "mitski is annoying"), or an answer straight after something she said to them with
+nobody talking in between. Anything that replies to, pings or names someone else never counts, even mid-chat with
+her or when she chimes in on it. The one exception is going after someone she's close to, which needs a message
+said to that friend. The code also makes it human: bad moments count more than good ones, the same compliment
+wears off, a friend's roast stings less, sweet talk from someone she doesn't like counts for less, too much
+affection too soon makes her suspicious, it gets harder to move the closer it is to an extreme, and nobody can
+move it more than `LIKE_DAILY_MAX` in a day. People she stops talking to slowly drift back to neutral.
+
+What it changes: every reply comes with a note on how she feels about that person and why ("you really like
+anna... lately: they loves laufey like you do"). She's warmer and more playful with people she likes, cooler and
+curt with people she doesn't, flirts back only where there's chemistry, chimes in more with people she likes,
+only starts dms with people she likes, and sometimes leaves small talk on read from people she can't stand
+(`LEAVE_ON_READ`). Even when she dislikes someone she never uses slurs or threats or goes after their looks or
+identity, and if they're genuinely going through something she drops the attitude.
+
+**Her mood** is a handful of emotions (happy, amused, excited, affectionate, flustered, proud, content, down, lonely,
+irritated, stressed, embarrassed, bored, tired). People move them, and so does her day: exams make her stressed,
+late nights tired, trips excited, a quiet few hours lonely, and some days are just a bit better or worse. Each one
+fades back at its own pace (amused in minutes, stressed over hours), and only the strongest one or two show, gently,
+in how she talks. `MOOD_SWING` makes her steadier or moodier.
+
+`!mood` shows her mood and why. `!feel <who>` shows how she feels about someone and the moments behind it, and
+`!feel <who> like 40`, `trust`, `chemistry`, `hurt` or `reset` sets it by hand. Her mood is kept in `data/mood.json`.
+
 ## Commands
 
 Only `OWNER_ID` can use commands. Anyone else who tries one gets no answer at all, and she doesn't chat about it
@@ -148,6 +201,8 @@ command                     alias   what it does
 !listusers                  !lu     list ignored users
 
 !mem <who>                  !m      what she remembers about someone (also: self, update, reflect, raw, search)
+!mood                       !md     how she feels right now, and why
+!feel <who> [...]           !fl     how she feels about someone and why (reset, or like/trust/chemistry/hurt <n>)
 !forget <who> <what>        !fg     forget a fact (F3), a field (age, nickname, portrait) or everything (all)
 !note <who> [cat] <fact>    !n      add a fact by hand
 !set <who> <field> <value>  !sf     set a profile field
@@ -156,7 +211,7 @@ command                     alias   what it does
 
 !sleep <server> [hours]     !sl     send her away from a server for a while
 !wake <server|all>          !wk     bring her back
-!sleepexclude <server ...>  !se     servers she never goes away from by herself
+!sleepexclude <server ...>  !se     servers she never goes away from by herself, and stays up in when her routine has her asleep
 !sleepinclude <server ...>  !si     undo that
 !listsleep                  !ls     sleep settings, and where she's asleep or quiet right now
 !reminders                  !rem    list pending reminders (cancel <n>, clear)
@@ -193,12 +248,17 @@ or an empty one that looks fine if nobody's in voice.
   role or bio changes. Bios cost one profile lookup per person a day, at most `AGE_CHECK_BIOS_PER_HOUR`.
 - She doesn't start dms by herself unless you turn on `DM_ENABLED` (anyone), `DM_ENABLED_FRIEND` (only people on her
   friends list) or `DM_KEEP_PROMISES`. She never starts one with someone she knows is a minor, and not while she's
-  busy. Unprompted dms from a user account are also the quickest way to get it flagged.
-- If someone sincerely asks whether she's a bot, she doesn't lie about it. Teasing ("ur such a bot") is still just
-  banter.
+  busy. With `FEELINGS` on she also only starts one with people she likes (kept promises still go out). Unprompted
+  dms from a user account are also the quickest way to get it flagged.
+- If someone sincerely asks whether she's a bot, she will lie about it.
 - When someone asks what she knows about another person, she only shares harmless things (games, music, what they
   like). Age, location, relationships, job, school and private facts stay between her and that person.
 - People she hasn't talked to in `MEMORY_RETENTION_DAYS` (180) are forgotten.
+- How she feels about someone is part of her memory of them, so `!forgetme` deletes it too. For anyone in
+  `MEMORY_OPTOUT` it's never used or changed (adding someone to that list by hand doesn't delete what was already
+  saved). Only messages said to her can change it. She never builds chemistry with or flirts
+  with someone she knows is a minor, and disliking someone never lets her use slurs, threats or attacks on who
+  they are.
 - Memory lives in `data/memory.db` (sqlite). An existing `memory.json` and `self.json` are moved into it on the
   first start and renamed to `.migrated`.
 
@@ -300,21 +360,24 @@ mitski/
   config/          the option schema (all defaults live here), settings, the yaml templates
   core/            logging, storage, background tasks, bounded containers, metrics, clock, text helpers
   llm/             llama-server client, helper model, prompt formats, gpu queue
-  chat/            routing, the reply pipeline, context, drafts, review, sending, typing style, state
+  chat/            routing, who a message is for, the reply pipeline, context, drafts, review, sending, typing
+                   style and typos, state
   brain/           planning before a reply, tools, web search, math, answer checks
   memory/          people and herself, notes, recall, embeddings, games and music over time
   media/           emojis, stickers, reactions, gifs, youtube
   vision/          finding images in messages, frames, captions
   voice/           joining and leaving vc, picking a room, typing sounds
-  social/          owner, quiet and sleep, routine, dms, profiles
+  social/          owner, quiet and sleep, her routine and the model that plans her days (life.py), her feelings
+                   and mood (feelings.py), dms, profiles, age checks, privacy
   reminders/       parsing times, the store, sending them
   admin/           commands and the log itself
   testing/         fake discord objects and a scripted world, used by tests and evals
 tests/             unit and integration tests
 evals/             conversation replays
 training/          message scraper, data prep and lora training
+  config/          the scraper's config.yaml, with its token (not in git)
 config/            mitski.yaml (settings) and keys.yaml (token and keys), made on first run (not in git)
-data/              memory.db, caches and training data (not in git)
+data/              memory.db, mood.json, routine.json, reminders, caches and training data (not in git)
 mp3/               keyboard sounds for voice chat (not in git)
 models/            gguf model files (not in git)
 ```

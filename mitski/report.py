@@ -19,6 +19,8 @@ def startup_report(app):
         + f" | gifs: {_on(cfg.GIPHY_KEY)} | "
         f"dms: {'on' if cfg.DM_ENABLED else 'friends only' if cfg.DM_ENABLED_FRIEND else 'off'} | "
         f"routine: {_on(cfg.ROUTINE, ', planned by her model' if cfg.ROUTINE_PLANNER else '')} | memory: {f'{len(memory.people)} people' if cfg.MEMORY else 'off'}",
+        f"feelings: {_on(cfg.FEELINGS, ' about people')}"
+        + (f", mood {_on(cfg.MOOD)}" if cfg.FEELINGS else f" | mood: {_on(cfg.MOOD)}"),
         f"profiles: {_on(cfg.PROFILES)} | reactions: {_on(cfg.REACTIONS)} | {emojis} emojis, {stickers} stickers | "
         f"search: {app.search.provider or 'off'} | youtube: {_on(cfg.YOUTUBE, youtube)}",
         f"vision: {app.vision.status()}" + (f" | ignoring {len(cfg.ignored)} user(s)" if cfg.ignored else ""),

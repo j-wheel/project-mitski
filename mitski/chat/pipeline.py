@@ -22,7 +22,7 @@ from mitski.llm.client import ModelUnavailable
 
 log = logs.get("pipeline")
 
-PLAN_SUMMARY = re.compile(r"What to tell them:|What .{1,40} wants:")
+PLAN_SUMMARY = re.compile(r"What to tell them:|What happened, roughly:|What .{1,40} wants:")
 TYPING_SETTLE = 7
 LET_GO_CHANCE = 0.8
 BLANK_LINES_CHANCE = 0.5
@@ -42,6 +42,14 @@ LONG_ASK = re.compile(
     re.I,
 )
 LONG_MESSAGE = 250
+
+
+def too_few_answers(lines, questions):
+    """One line for several questions, or two or more questions with no line at all. Texting merges answers, so
+    two lines for three questions is fine."""
+    return lines < questions and (lines == 1 or questions - lines >= 2)
+
+
 FIXES = {
     "echo": "Don't repeat or copy anything anyone said, reply to it in your own words.",
     "robotic": "Talk like yourself, a person, not like an assistant.",
@@ -139,14 +147,15 @@ class ReplyPipeline(Component):
     async def _until_she_sees_it(self, mode, key):
         routine = self.app.routine
         msg = self.state.waiting.get(key) if key else None
-        if msg is None or routine.looking():
+        gid = getattr(getattr(msg, "guild", None), "id", None)
+        if msg is None or routine.looking(gid):
             return 0.0, ""
-        what = routine.doing()
+        what = routine.doing(gid)
         kind = "dm" if mode == "dm" else "ping" if self.app.addressing.talks_to_her(msg) else "chat"
         start = routine.stamp()
-        deadline = routine.notice_at(kind, owner=self.app.owner.is_owner(msg.author))
+        deadline = routine.notice_at(kind, owner=self.app.owner.is_owner(msg.author), guild_id=gid)
         log.info("[%s] she's %s, she'll see %s's message in %.0f min", mode, what, msg.author, (deadline - start) / 60)
-        while key in self.state.waiting and not routine.looking():
+        while key in self.state.waiting and not routine.looking(gid):
             left = deadline - routine.stamp()
             if left <= 0:
                 routine.look()
@@ -158,7 +167,7 @@ class ReplyPipeline(Component):
         return waited, what
 
     async def respond(self, channel, mode, key=None, trigger=None):
-        if mode == "ambient" and not self.app.routine.free:
+        if mode == "ambient" and not self.app.routine.free_in(getattr(getattr(channel, "guild", None), "id", None)):
             return
         waited, was_doing = await self._until_she_sees_it(mode, key)
         lock = self.state.channel_locks.setdefault(channel.id, asyncio.Lock())
@@ -396,6 +405,10 @@ class ReplyPipeline(Component):
     async def _plan(self, reply):
         target, channel = reply.target, reply.channel
         reply.thought = await self._think(reply)
+        if reply.direct and self.app.feelings.leaves_on_read(target.author, reply.thought.reply_type):
+            log.info("[%s] she doesn't like %s much, leaving it on read", reply.mode, target.author)
+            Metrics.event("left on read")
+            return reply.stop("left on read")
         if (
             reply.thought.reply_type == "no_reply"
             and self._owed(reply)
@@ -438,7 +451,7 @@ class ReplyPipeline(Component):
             wanted = reply.thought.length == "longer"
         else:
             wanted = bool(LONG_ASK.search(reply.said)) or len(reply.said) >= LONG_MESSAGE
-        if not wanted or self.app.routine.level not in (None, "gaming"):
+        if not wanted or not self.app.routine.can_hang_out_in(getattr(reply.guild, "id", None)):
             return False
         now = time.monotonic()
         if now - self.long_at.get(reply.channel.id, NEVER) < self.cfg.LONG_REPLY_COOLDOWN_MIN * 60:
@@ -454,6 +467,7 @@ class ReplyPipeline(Component):
         if not (self.cfg.MULTI_ANSWER and len(reply.pieces) > 1 and reply.direct and not chiming):
             return
         things = self.app.addressing.separate_things(reply.pieces, reply.thought)
+        name = self.messages.call(reply.target.author)
         if len(things) < 2:
             return
         reply.extras = [e for e in reply.extras if not PLAN_SUMMARY.match(str(e or ""))]
@@ -461,8 +475,9 @@ class ReplyPipeline(Component):
         reply.things = things[-self.cfg.MAX_LINES :]
         asked = " / ".join(f'"{cut(t.text, 120)}"' for t in reply.things)
         reply.extras.append(
-            f"{self.messages.call(reply.target.author)} asked you a few different things: {asked}. Answer every one "
-            f"of them, a short line for each, the way you'd text it."
+            f"{name} asked you a few different questions: {asked}. Answer every one of them the way you'd text it: "
+            f"a short line each, or one line that covers two if that's more natural, in whatever order fits. Use "
+            f"your own words, never repeat theirs back."
         )
         log.info("[%s] %s asked %d different things", reply.mode, reply.target.author, len(reply.things))
 
@@ -499,7 +514,7 @@ class ReplyPipeline(Component):
                 if reply.mode != "ambient" and self.cfg.REACTIONS:
                     await self.app.reactions.react(reply.trigger)
                 return reply.stop("bad draft")
-        if reply.lines and reply.things and len(reply.lines) < len(reply.things):
+        if reply.lines and reply.things and too_few_answers(len(reply.lines), len(reply.things)):
             log.info("[%s] %d lines for %d questions, trying again", reply.mode, len(reply.lines), len(reply.things))
             Metrics.event("answer all retry")
             async with self._typing(reply):

@@ -129,21 +129,27 @@ class RecallMixin:
             return ""
         name = self.name_of(user)
         d = self.get(user.id)
+        feelings = getattr(self.app, "feelings", None)
         if not d or (d["talks"] < 3 and not d["facts"] and not d["slots"] and not d.get("episodes")):
-            return (
+            first = (
                 f"You're talking with {name}, you don't really know them yet. You haven't talked before, so "
                 f"there's nothing you remember with them."
             )
+            feeling = feelings.regard_note(user, d, name) if d and feelings and feelings.stands_out(d, user.id) else ""
+            return f"{first} {feeling}".strip()
         now = time.time()
         today = dt.date.today()
         s = d["slots"]
         call = self.call_name(d) or name
+        like = feelings.view(d, user.id, now)["like"] if feelings is not None and feelings.people_on else 0.0
         if d.get("rel"):
             rel = d["rel"]
-        elif d["talks"] >= 60 and d["vibe"] >= 0.5:
+        elif d["talks"] >= 60 and like >= 35:
             rel = "one of your close friends"
-        elif d["talks"] >= 15:
+        elif d["talks"] >= 15 and like > -8:
             rel = "a friend of yours"
+        elif d["talks"] >= 15:
+            rel = "someone you know from around here"
         elif d["talks"] >= 3:
             rel = "someone you've talked to a few times"
         else:
@@ -167,10 +173,9 @@ class RecallMixin:
             out.append(f"{call} likes calling you {d['calls_her']['v']}.")
         if d.get("pinned"):
             out.append(d["pinned"].rstrip())
-        if d["vibe"] <= -2 and not d.get("rel"):
-            out.append(f"{call} has been mean to you lately, so you're a bit sassy and guarded with them.")
-        elif d["vibe"] >= 2.5:
-            out.append(f"{call} is always sweet to you, so you're extra warm with them.")
+        feeling = feelings.regard_note(user, d, call) if feelings is not None else ""
+        if feeling:
+            out.append(feeling)
         if d.get("gap_days"):
             out.append(f"You haven't talked in {d['gap_days']} days.")
         if full and d.get("portrait"):

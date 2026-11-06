@@ -25,7 +25,8 @@ class Ambient(Component):
         self.state.threshold_base[channel_id] = random.randint(self.cfg.ACTIVE_MIN, self.cfg.ACTIVE_MAX)
 
     def should_join(self, channel_id):
-        if self.app.sleep.state_of(channel_id) or not self.app.routine.free:
+        guild = getattr(self.app.get_channel(channel_id), "guild", None)
+        if self.app.sleep.state_of(channel_id) or not self.app.routine.free_in(getattr(guild, "id", None)):
             return False
         now = time.monotonic()
         factor = self.busy_factor(channel_id)

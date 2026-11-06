@@ -12,7 +12,10 @@ log = logs.get("review")
 class DraftReview(Component):
     async def answer_all(self, turns, persona, notes, things, channel, others, seen, first):
         asked = " / ".join(f'"{cut(t.text, 120)}"' for t in things)
-        must = f"Answer each of these now, one short line for each, in your own words: {asked}"
+        must = (
+            f"You skipped some of their questions: {asked}. Answer them now, the way you'd text it, a short line "
+            f"each (one line can cover two). Your own words: never repeat or copy what they said."
+        )
         text = await self.llm.generate(
             self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must),
             temperature=min(self.cfg.TEMPERATURE, 0.6),

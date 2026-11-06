@@ -17,6 +17,7 @@ from mitski.core.metrics import Metrics
 AT_NAME = re.compile(r"(?<![\w@])@[A-Za-z][\w.]{1,31}")
 FILE_NAME = re.compile(r"\b[\w-]+\.(?:mp4|mov|webm|mkv|png|jpe?g|gif|webp|mp3|wav|ogg)\b", re.I)
 SPEAKER_PREFIX = re.compile(r"^\s*(?:assistant|user|bot)\s*:\s+", re.I)
+ECHO_WORDS = 4
 MEDIA_TAG = re.compile(
     r"\[(?:youtube video|video|link|gif|image|screenshot|sticker|file|attachment|audio)\b[^\]]*\]", re.I
 )
@@ -97,6 +98,10 @@ class DraftFilter(Component):
             return "third person"
         copied = self.echoed(lines, msgs)
         total = sum(len(ln) for ln in lines) or 1
-        if len(copied) >= 2 or sum(len(ln) for ln in copied) >= 0.5 * total:
+        if (
+            len(copied) >= 2
+            or sum(len(ln) for ln in copied) >= 0.5 * total
+            or any(len(_norm(ln).split()) >= ECHO_WORDS for ln in copied)
+        ):
             return "echo"
         return None

@@ -20,6 +20,7 @@ REPLY_TYPES = {
     "small_talk": "",
     "answer_question": "They want an actual answer, so give it properly, with the facts you checked if you checked any.",
     "describe": "They want you to describe or explain it, so actually do that in a couple of sentences, in your own words.",
+    "story": "They want a story, so tell one properly, the way you'd tell a friend something that happened to you.",
     "opinion": "They want your real opinion, so give one, don't dodge.",
     "help": "They want help, so actually help, with specifics.",
     "comfort": "They're not doing great, be there for them for real.",
@@ -29,7 +30,9 @@ REPLY_TYPES = {
     "other": "",
 }
 ANSWERY = {"answer_question", "describe", "help", "opinion"}
+PLANNED = ANSWERY | {"story"}
 LENGTHS = ("short", "longer")
+BRIEF_MAX = 600
 PLAN = {
     "type": "object",
     "properties": {
@@ -37,7 +40,7 @@ PLAN = {
         "wants": {"type": "string", "maxLength": 160},
         "reply_type": {"type": "string", "enum": list(REPLY_TYPES)},
         "length": {"type": "string", "enum": list(LENGTHS)},
-        "answer": {"type": "string", "maxLength": 300},
+        "answer": {"type": "string", "maxLength": BRIEF_MAX},
         "tools": {
             "type": "array",
             "maxItems": 3,
@@ -110,6 +113,10 @@ BRIEF = {
 
 
 ANSWER_NOTE = "What to tell them: {brief}. Say it your way, and actually answer instead of just asking something back."
+STORY_NOTE = (
+    "What happened, roughly: {brief}. Tell it as your own story, your way, with the funny bits in, like you're "
+    "telling a friend."
+)
 
 
 def available_tools(search=True, weather=True, vision=True, history=True):
@@ -145,10 +152,11 @@ def _topics_block(q):
     if len(q.parts) < 2:
         return ""
     return (
-        f"topics: which of those numbered pieces each need their own answer from {q.her}. Different questions "
-        f"or topics -> all of their numbers, like [1, 2] or [1, 2, 3]. One thing said over a few pieces, or one "
-        f'real piece plus "hihi", "lol", "wait" or a follow-up about the same thing -> just the main one, '
-        f"like [1].\n"
+        f"topics: which of those numbered pieces are separate QUESTIONS or requests that each need their own "
+        f"answer from {q.her}, like [1, 2]. Remarks, reactions, jokes, emojis and comments are never their own "
+        f"topic: a few of those in a row get one reply to the whole thing, so -> just the main piece, like [1]. "
+        f'One thing said over a few pieces, or one question plus "hihi", "lol", "wait", "😭" or a follow-up about '
+        f"the same thing -> just the main one.\n"
     )
 
 
@@ -213,7 +221,9 @@ def plan_request(q, tools, now):
         + _remind_block(q)
         + f'wants: one short sentence on what {name} wants. {her} is "you" here (like "to know if you\'re still '
         f'here"), never her name or "she".\n'
-        f"reply_type: one of {', '.join(REPLY_TYPES)}. no_reply if it doesn't need an answer from her at all.\n"
+        f"reply_type: one of {', '.join(REPLY_TYPES)}. story when they ask her to tell a story, a joke or something "
+        f"funny or interesting that happened (joke is for when they're the ones joking around). no_reply if it "
+        f"doesn't need an answer from her at all.\n"
         f'length: "short" almost always: chatting, jokes, reactions, greetings and quick questions get a quick line '
         f'or two. "longer" only when a good reply really needs more than that: they asked her to explain or '
         f"describe something properly, want advice or help with specifics, asked for a story (how her trip, exam "
@@ -222,13 +232,16 @@ def plan_request(q, tools, now):
         f"answer: if they ask something {her} can answer from what she knows or what's in the chat, the gist of "
         f"the answer as a short note of what she'd say, in her own voice: when it's about {her} herself it's "
         f'"i" and "my", never her name or "she" (like "canberra, not sydney" or "yes, i\'m still here"). A note, '
-        f"not a message: no greeting, and nothing about their feelings or private stuff unless they asked. "
-        f'"" if it\'s just chatting, a greeting, or she needs a tool to find out.\n'
+        f"not a message: no greeting, and nothing about their feelings or private stuff unless they asked. For a "
+        f"story, what happens in it, start to end, in a few sentences. "
+        f"\"\" if it's just chatting, a greeting, or she needs a tool to find out. Her own earlier messages aren't "
+        f"facts she has to stick to: if she said something odd or random and they're confused by it, the answer can "
+        f'be her laughing it off ("lmao idk what i was on about") instead of repeating it.\n'
         f"tools she can use first (none if she doesn't need any, at most 3). remember is for things about "
         f"{name} or her past chats with them that aren't in the recent chat, recall is for OTHER people they "
         f"mention:\n" + "\n".join(f"- {k}: {v}" for k, v in tools.items()) + _search_block(tools) + _owner_block(q)
     )
-    budget = (380 if q.owner else 300) + (20 if len(q.parts) >= 2 else 0) + (60 if q.remind else 0)
+    budget = (480 if q.owner else 400) + (20 if len(q.parts) >= 2 else 0) + (60 if q.remind else 0)
     return system, user, plan_schema(q.owner, len(q.parts), q.remind), budget
 
 

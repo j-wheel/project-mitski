@@ -292,7 +292,7 @@ async def test_too_few_answers_gets_one_more_try(world, layout):
     world.replies.extend(["just one line", "im good\nplaying cs"])
     await burst(world, world.people["anna"], "mitski how are u?", "what are u playing rn?")
     assert world.sent_text() == ["im good", "playing cs"]
-    assert "Answer each of these now" in world.prompts[1]
+    assert "You skipped some of their questions" in world.prompts[1]
     assert world.app.metrics.done[-1].events["answer all retry"] == 1
 
 
@@ -309,6 +309,65 @@ async def test_a_bad_draft_of_several_answers_is_redone(world, layout):
     await burst(world, world.people["anna"], "mitski how are u?", "what are u playing rn?")
     assert world.sent_text() == ["fine and playing cs"]
     assert world.app.metrics.done[-1].events["redo robotic"] == 1
+
+
+def planner_splits(world, topics):
+    async def ask_json(system, user, schema, max_tokens=400, think=False):
+        if "reply_type" not in schema.get("properties", {}):
+            return None
+        return {
+            "to_her": "her",
+            "wants": "",
+            "reply_type": "small_talk",
+            "length": "short",
+            "answer": "",
+            "tools": [],
+            "topics": topics,
+        }
+
+    world.app.cfg.THINKING = True
+    world.app.helper.ask_json = ask_json
+
+
+async def test_a_few_remarks_in_a_row_get_one_reply_not_an_answer_each(world, layout):
+    """The real one: "DONT LEAVE ME I'll get separation anxiety / 😭 😭 / woah she went therapy mode" was split
+    into three things to answer, and she sent one of their messages back to them."""
+    layout(shape.BLOCK)
+    planner_splits(world, [1, 2, 3])
+    world.replies.extend(
+        [
+            "im gonna get you for that 😭\ndont leave me i'll get separation anxiety! ><",
+            "nooo im not going anywhere lol",
+        ]
+    )
+    await burst(
+        world,
+        world.people["anna"],
+        "mitski DONT LEAVE ME I'll get separation anxiety",
+        "😭 😭",
+        "woah she went therapy mode",
+    )
+    assert "asked you a few different questions" not in world.prompts[0]
+    assert "sent you a few messages in a row" in world.prompts[0] and "never repeat their words" in world.prompts[0]
+    assert world.sent_text() == ["nooo im not going anywhere lol"]
+    assert world.app.metrics.done[-1].events["redo echo"] == 1
+
+
+async def test_a_copied_sentence_is_caught_even_inside_a_longer_reply(world, layout):
+    layout(shape.QUICK)
+    world.replies.extend(
+        ["ok so\ni'll get separation anxiety if you leave\nanyway what are we playing tonight", "lol ok whats up"]
+    )
+    await world.send(world.people["anna"], "mitski i'll get separation anxiety if you leave")
+    assert world.sent_text() == ["lol ok whats up"]
+
+
+async def test_two_lines_for_three_questions_is_fine_texting_merges_answers(world, layout):
+    layout(shape.QUICK)
+    world.replies.extend(["good and playing cs\nya ill be on later", "unused"])
+    await burst(world, world.people["anna"], "mitski how are u?", "what are u playing?", "are u on tonight?")
+    assert "answer all retry" not in world.app.metrics.done[-1].events
+    assert world.sent_text() == ["good and playing cs", "ya ill be on later"]
 
 
 async def test_multi_answer_off_has_no_special_note(world, layout):

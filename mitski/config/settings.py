@@ -23,7 +23,8 @@ DEFAULT_IDENTITY = (
 LIVE_LISTS = {
     "CHANNELS": "channel ids she talks in (!addchannel / !delchannel / !listchannels change this live)",
     "IGNORE_USERS": "user ids she ignores completely (!ignoreuser / !unignoreuser / !listusers change this live)",
-    "SLEEP_EXCLUDE": "server ids where she never goes to sleep by herself (!sleepexclude / !sleepinclude change this live)",
+    "SLEEP_EXCLUDE": "server ids where she never goes to sleep by herself, and where her routine's sleep doesn't count "
+    "either (!sleepexclude / !sleepinclude change this live)",
     "MEMORY_OPTOUT": "user ids she keeps no memory about (!forgetme / !rememberme change this live for her owner, edit this list for anyone else)",
 }
 TRUE_WORDS = {"true", "yes", "on", "1"}

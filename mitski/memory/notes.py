@@ -26,6 +26,7 @@ from mitski.memory.heuristics import (
 )
 from mitski.memory.schema import (
     BOND_MAX,
+    EVIDENCE,
     HISTORY_MAX,
     MONTHS,
     PORTRAIT_MAX,
@@ -35,8 +36,30 @@ from mitski.memory.schema import (
     STYLE_MAX,
     SUMMARY_MAX,
 )
+from mitski.social.feelings import CLOSE, KINDS
 
 log = logs.get("memory")
+
+NOTES_TOKENS = 1300
+REFLECT_TOKENS = 1100
+NOTES_CHAT_CHARS = 18000
+FEELING_ITEM = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": list(KINDS)},
+        "intensity": {"type": "integer", "minimum": 1, "maximum": 3},
+        "evidence": EVIDENCE,
+        "why": {"type": "string", "maxLength": 100},
+    },
+    "required": ["kind", "intensity", "evidence", "why"],
+    "additionalProperties": False,
+}
+NOTES_SCHEMA = {
+    **SCHEMA,
+    "properties": {**SCHEMA["properties"], "feelings": {"type": "array", "maxItems": 5, "items": FEELING_ITEM}},
+    "required": [*SCHEMA["required"], "feelings"],
+}
+FEELING_KINDS = "\n".join(f"- {kind}: {meaning}" for kind, (meaning, _, _) in KINDS.items())
 
 
 class NotesMixin:
@@ -150,6 +173,14 @@ class NotesMixin:
             "new_threads": ["ask alex how his exam on monday went"],
             "done_threads": [],
             "about_her": [{"category": "life", "fact": "is 20 years old", "evidence": "i'm 20 btw"}],
+            "feelings": [
+                {
+                    "kind": "friendly_teasing",
+                    "intensity": 1,
+                    "evidence": "ok doll whatever u say",
+                    "why": "teased you back about being older",
+                }
+            ],
         }
         return f"""You keep {her}'s memory of the people she talks to on discord. You get what she already knows about one person and their newest messages. Answer with JSON only, saying what's new or changed about that person.
 
@@ -173,6 +204,9 @@ conversation: if {her} talked with them in these messages: summary = 1 or 2 sent
 new_threads: things to come back to in a later chat, written as a note to {her}: something she promised, something they'll tell her later, something she should ask about ("ask how the date went", "you said you'd send him the song"). Not plans with a date (those are facts). Usually none.
 done_threads: numbers of open threads (T) that got dealt with in these messages.
 about_her: things {her} said about HERSELF (her age, life, likes, past, plans), with her own words as evidence, so she stays consistent. Start with the verb ("is 20 years old", "plays cs2") and say "your" for what's hers ("your pc keeps freezing"). Nothing about whether she's a bot, an AI or a real person.
+feelings: how the person treated {her} in the new messages, so she can feel about them the way a person would. ONLY messages marked "(to {her})" count: those were said to her. Anything they said to someone else or to the room never counts, however nice or mean, even if it's about {her}. The one exception is mean_to_her_friends, from a message marked "(to <name>)" going after that person. Each moment is one from this list:
+{FEELING_KINDS}
+intensity: 1 = a small thing, 2 = clear, 3 = a big deal. why: a few words to {her} about what they did ("called you annoying", "hyped your cs clip", "loves laufey like you do"). evidence: their exact words, as always. Tell banter from meanness: friends roasting each other with "lol", emojis and both laughing is friendly_teasing, not insulted_her. Sarcasm isn't a compliment, and being nice once isn't genuine_affection. shared_interest only when they like something {her} likes too (her own facts and what she said show what she likes). Most messages have none of this: an empty list is normal.
 
 Only write down lasting things worth knowing next week. Not what they just did in this chat ("said hi", "used 'meow'", "sent a gif", "asked about x"), not emojis, and not how they feel right this moment ("is tired", "is frustrated"). Skip jokes, sarcasm and obvious trolling. Don't repeat what's already known. Empty lists are fine, most messages have nothing new.
 
@@ -231,11 +265,32 @@ Answer:
             text += (
                 f"First think it through: go over the new messages one by one. Who wrote it, and is it about "
                 f"{name}, {her} or someone else? Is it lasting, or just chat? Is it already known, or does it "
-                f"correct something known? What are the exact words to quote? Then answer with the JSON."
+                f"correct something known? What are the exact words to quote? And how did {name} treat {her}: "
+                f"kind, mean, banter, flirty, something in common? Then answer with the JSON."
             )
         else:
             text += f"What's new or changed about {name}? JSON only."
         return text
+
+    def _aimed(self, user, msgs, me):
+        """Who each of the person's messages was really said to, decided by code: "them" = to her, "them_friend" =
+        to someone she's close to, "them_else" = to anyone else or the room. Her own are "her", others' "other"."""
+        addressing = getattr(self.app, "addressing", None)
+        feelings = getattr(self.app, "feelings", None)
+        hers = [m for m in msgs if m.author.id == me]
+        out = {}
+        for m in msgs:
+            if m.author.id == me:
+                out[m.id] = ("her", None)
+            elif m.author.id != user.id:
+                out[m.id] = ("other", None)
+            elif addressing is not None and addressing.aimed_at_her(m, hers):
+                out[m.id] = ("them", None)
+            else:
+                target = addressing.target_of(m) if addressing is not None else None
+                close = target is not None and feelings is not None and feelings.like_of(target) >= CLOSE
+                out[m.id] = ("them_friend" if close else "them_else", target)
+        return out
 
     def _current_episode(self, d):
         sid = d.get("session_start") or d.get("first_seen")
@@ -259,21 +314,29 @@ Answer:
             earlier = [m for m in msgs if m.id <= upto][-6:]
             me = self.her_id()
 
+            aimed = self._aimed(user, earlier + new, me)
+
             def line(m):
                 who = her if m.author.id == me else self.name_of(m.author)
-                return f"{who}: {cut(self.text_of(m), 400)}"
+                kind, target = aimed.get(m.id, (None, None))
+                to = f" (to {her})" if kind == "them" else f" (to {self.name_of(target)})" if target else ""
+                return f"{who}{to}: {cut(self.text_of(m), 400)}"
+
+            while len(new) > 1 and sum(len(line(m)) + 1 for m in new) > NOTES_CHAT_CHARS:
+                new = new[1:]
 
             def who(m):
                 return "her" if m.author.id == me else "them" if m.author.id == user.id else "other"
 
             evidence = [(who(m), self.text_of(m)) for m in earlier + new]
+            to_her = [(aimed.get(m.id, ("other", None))[0], self.text_of(m)) for m in earlier + new]
             where = f"#{channel.name}" if getattr(channel, "name", None) else "dms"
             took_part = any(m.author.id == me for m in new)
             answer = await self.app.helper.ask(
                 self._instructions(her),
                 self._data_text(d, name, her, earlier, new, line, think=self.think_on),
-                SCHEMA,
-                900,
+                NOTES_SCHEMA,
+                NOTES_TOKENS,
                 think=True,
             )
             out = answer.text
@@ -284,6 +347,9 @@ Answer:
                 log.info("%s: the notes model wrote nothing usable: %r", name, cut(re.sub(chr(10), " ", out), 200))
             else:
                 changes = self.apply_json(d, data, self._names_of(d), her, evidence, where, took_part)
+                feelings = getattr(self.app, "feelings", None)
+                if feelings is not None:
+                    changes += feelings.appraise(user, d, data.get("feelings"), to_her)
                 self.fix_voice_of(d)
                 self.fix_own_voice()
             self._expire(d, changes)
@@ -513,7 +579,8 @@ Answer:
             f"portrait: 2 to 4 sentences on who they are and what matters to them right now, and what they are "
             f'to her. Things only heard from others stay "apparently".\n'
             f'talk_style: 1 or 2 sentences on how you are with them and what they like from you ("you tease them '
-            f'and they love it", hype, being there for them, gaming talk, ...), going by how your chats went.\n'
+            f'and they love it", hype, being there for them, gaming talk, ...), going by how your chats went and '
+            f"fitting how you feel about them.\n"
             f"inside_jokes: running jokes or bits between them, only if the episodes or facts show one. "
             f"avoid: things that upset them or that they don't want to talk about, only if shown. "
             f'shared: things they and {her} have in common or did together. For all three, "from" lists the '
@@ -539,6 +606,11 @@ Answer:
             )
             + f"Profile: {self.slot_summary(d) or '(nothing)'}\n"
             + (f"Bond: {d['bond']}\n" if d.get("bond") else "")
+            + (
+                f"How you feel about them right now: {self.app.feelings.summary(d)}\n"
+                if getattr(self.app, "feelings", None) is not None and self.app.feelings.summary(d)
+                else ""
+            )
             + (f"On discord: {act}\n" if act else "")
             + f"\nFacts:\n{facts or '(none)'}\n\nConversations (episodes):\n{episodes or '(none)'}\n"
             + (f"\nOLD (fold these into history): {', '.join('E' + str(e['id']) for e in fold)}\n" if fold else "")
@@ -549,7 +621,7 @@ Answer:
         changes = []
         self.reflecting.add(id(d))
         try:
-            out = (await self.app.helper.ask(system, user_text, REFLECT, 1000, think=True)).text
+            out = (await self.app.helper.ask(system, user_text, REFLECT, REFLECT_TOKENS, think=True)).text
         except Exception:
             log.warning("memory reflect failed for %s", name, exc_info=True)
             return []

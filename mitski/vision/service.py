@@ -21,6 +21,13 @@ RETRY_AFTER = 600
 HOUR = 3600
 
 
+async def sticker_description(sticker):
+    """A sticker in a message is only a stub that has to be fetched to get its description. One from a server's
+    sticker list (the background scan) is already complete, and has no fetch at all."""
+    full = sticker if hasattr(sticker, "description") else await sticker.fetch()
+    return (getattr(full, "description", "") or "").strip()[:100]
+
+
 class Vision:
     def __init__(self, app):
         cfg = app.cfg
@@ -183,11 +190,9 @@ class Vision:
             return
         self.meta[it.key] = ""
         try:
-            full = await it.source[1].fetch()
+            self.meta[it.key] = await sticker_description(it.source[1])
         except Exception:
             log.debug("couldn't fetch sticker %s", it.key, exc_info=True)
-            return
-        self.meta[it.key] = (getattr(full, "description", "") or "").strip()[:100]
 
     async def _download(self, it):
         where, src = it.source

@@ -202,7 +202,7 @@ def answers_it(lines, brief, strict=False):
 
 
 def clean_brief(text):
-    text = cut(str(text or "").strip().strip('"'), 300)
+    text = cut(str(text or "").strip().strip('"'), 600)
     if not text or ASSISTANTY.search(text):
         if text:
             log.info("dropped a brief that sounded like an assistant: %r", text)

@@ -101,10 +101,9 @@ class Situation(Component):
         if user is not None and mode != "dm_open":
             if len(burst) > 1:
                 lines.append(
-                    f"{call} sent you a few messages in a row: "
-                    + " / ".join(f'"{cut(self.messages.text(m), 120)}"' for m in burst)
-                    + ". Answer all of it together (especially anything they asked), not "
-                    "just the last one."
+                    f"{call} sent you a few messages in a row, so read all of them, not just the last one. Reply to "
+                    f"it together like a person would: answer anything they asked, and for the rest just react to "
+                    f"what matters most. You don't need a line for each message, and never repeat their words back."
                 )
             if people:
                 said = cut(self.app.addressing.burst_text(burst), 200)
@@ -148,9 +147,12 @@ class Situation(Component):
             lines.append("You were away from this server for a while and just came back.")
         if guild is not None and mode != "ambient" and self.app.away.just_released(guild.id):
             lines.append("You were being quiet here for a while, and now you can talk again.")
-        doing = self.app.routine.note()
+        doing = self.app.routine.note(getattr(guild, "id", None))
         if doing:
             lines.append(doing)
+        mood = self.app.feelings.mood_note()
+        if mood:
+            lines.append(mood)
         if around:
             by_id = {m.id: m for m in list(msgs) + list(around)}
             lines.append(
