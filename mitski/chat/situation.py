@@ -14,8 +14,9 @@ class Situation(Component):
         return self.app.ages.any_minor(users)
 
     def persona(self, user, guild=None, full=True, channel=None, people=()):
+        policy = self.app.policy
         parts = [
-            self.cfg.PERSONA,
+            policy.tamed(channel, self.cfg.PERSONA),
             self.cfg.identity_note.replace("{name}", short_name(self.me) if self.me else "mitski"),
         ]
         boss = (
@@ -25,14 +26,14 @@ class Situation(Component):
         )
         for blurb in (
             boss,
-            self.memory.blurb(user, full=full),
+            policy.tamed(channel, self.memory.blurb(user, full=full)),
             self.memory.self_blurb(),
             self.app.profiles.own_status(),
             self.app.emojis.hint(guild),
         ):
             if blurb:
                 parts.append(blurb)
-        parts.append(self.app.policy.note(channel, minors=self.minors_among([user, *people])))
+        parts.append(policy.note(channel, minors=self.minors_among([user, *people])))
         return "\n\n".join(parts)
 
     def owner_call(self):
@@ -166,7 +167,10 @@ class Situation(Component):
             )
             if any(m.author.id == her_id for m in around):
                 lines.append(f"What you already said there is done, don't say it again: now answer {call}.")
-        vc_line = self.app.voice.note(guild, lambda u: self.messages.call(u)) if guild is not None else ""
+        if guild is not None:
+            vc_line = self.app.voice.note(guild, lambda u: self.messages.call(u))
+        else:
+            vc_line = self.app.voice.call_note(channel, lambda u: self.messages.call(u))
         if vc_line:
             lines.append(vc_line)
         if target is not None and self.app.voice.decision_note(target.id):
@@ -183,6 +187,9 @@ class Situation(Component):
             lines.append("It's a short message, so a short reply fits.")
         if self.cfg.STYLE_NOTE:
             lines.append(self.cfg.STYLE_NOTE)
+        reminder = self.app.policy.reminder(channel)
+        if reminder:
+            lines.append(reminder)
         lines.append("Use these notes only where they fit, the way a real person would, and never mention them.")
         return "\n".join(lines)
 

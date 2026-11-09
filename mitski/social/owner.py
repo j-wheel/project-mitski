@@ -164,6 +164,7 @@ class OwnerRequests(Component):
         owner = self.app.owner
         if status.lower() in CLEAR_WORDS:
             owner.set_status("", "")
+            self.app.custom_status.clear()
             notes.append("You cleared your discord status.")
         elif status.lower() in RESET_WORDS:
             owner.set_status(None, None)

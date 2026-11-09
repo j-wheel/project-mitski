@@ -28,6 +28,8 @@ class SleepCycle(Component):
         if not last or time.time() - last[1] > BYE_WINDOW or random.random() >= self.app.away.bye_chance:
             return
         channel = last[0]
+        if self.messages.muted(channel):
+            return
         trigger = None
         async for m in channel.history(limit=1):
             trigger = m
@@ -42,7 +44,14 @@ class SleepCycle(Component):
             "You're heading off for a while now (sleep, food, irl stuff, whatever fits the time). Say a quick bye to "
             "the chat, one short line, no big explanation."
         )
-        persona = self.cfg.PERSONA + "\n\n" + self.cfg.identity_note.replace("{name}", short_name(self.me))
+        policy = self.app.policy
+        persona = "\n\n".join(
+            (
+                policy.tamed(channel, self.cfg.PERSONA),
+                self.cfg.identity_note.replace("{name}", short_name(self.me)),
+                policy.note(channel, minors=policy.minors_here(channel)),
+            )
+        )
         text = await self.llm.generate(self.llm.prompt(context.turns, persona, note))
         lines = self.app.drafts.tidy(text, channel.id, context.others)[:2]
         if lines:

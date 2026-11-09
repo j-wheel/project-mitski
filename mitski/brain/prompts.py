@@ -22,7 +22,8 @@ REPLY_TYPES = {
     "describe": "They want you to describe or explain it, so actually do that in a couple of sentences, in your own words.",
     "story": "They want a story, so tell one properly, the way you'd tell a friend something that happened to you.",
     "opinion": "They want your real opinion, so give one, don't dodge.",
-    "help": "They want help, so actually help, with specifics.",
+    "help": "They want help, so help like a friend would: what you'd actually know or think, in your own words, not "
+    "a full guide.",
     "comfort": "They're not doing great, be there for them for real.",
     "joke": "They're joking around, play along.",
     "greeting": "",
@@ -32,6 +33,7 @@ REPLY_TYPES = {
 ANSWERY = {"answer_question", "describe", "help", "opinion"}
 PLANNED = ANSWERY | {"story"}
 LENGTHS = ("short", "longer")
+ASKS = ("none", "quick", "favor", "effort", "expert")
 BRIEF_MAX = 600
 PLAN = {
     "type": "object",
@@ -40,6 +42,7 @@ PLAN = {
         "wants": {"type": "string", "maxLength": 160},
         "reply_type": {"type": "string", "enum": list(REPLY_TYPES)},
         "length": {"type": "string", "enum": list(LENGTHS)},
+        "ask": {"type": "string", "enum": list(ASKS)},
         "answer": {"type": "string", "maxLength": BRIEF_MAX},
         "tools": {
             "type": "array",
@@ -55,7 +58,7 @@ PLAN = {
             },
         },
     },
-    "required": ["to_her", "wants", "reply_type", "length", "answer", "tools"],
+    "required": ["to_her", "wants", "reply_type", "length", "ask", "answer", "tools"],
     "additionalProperties": False,
 }
 PLAN_OWNER = {
@@ -113,6 +116,10 @@ BRIEF = {
 
 
 ANSWER_NOTE = "What to tell them: {brief}. Say it your way, and actually answer instead of just asking something back."
+SKIPPED_LOOKUP_NOTE = (
+    "You don't know this offhand, and you're not looking it up right now. Say so the way a person would (no clue, "
+    "idk tbh, google it lol), and don't make anything up."
+)
 STORY_NOTE = (
     "What happened, roughly: {brief}. Tell it as your own story, your way, with the funny bits in, like you're "
     "telling a friend."
@@ -210,7 +217,7 @@ def plan_request(q, tools, now):
         f"You're {her}'s quick inner thoughts right before she replies on discord. She's a real person in a group "
         f"chat: she works out who a message is for, what they want, checks things on her phone when she needs to, "
         f"and then actually answers instead of dodging. It's {now.strftime('%A %Y-%m-%d %H:%M')} where she is. "
-        f'Answer with JSON: {{"to_her": "...", "wants": "...", "reply_type": "...", "length": "...", '
+        f'Answer with JSON: {{"to_her": "...", "wants": "...", "reply_type": "...", "length": "...", "ask": "...", '
         f'"answer": "...", "tools": [{{"tool": "...", "input": "..."}}]}}'
     )
     user = (
@@ -229,11 +236,21 @@ def plan_request(q, tools, now):
         f"describe something properly, want advice or help with specifics, asked for a story (how her trip, exam "
         f"or day went), are going through something and need her to really be there, or wrote a long, thoughtful "
         f"message that deserves a real answer.\n"
+        f'ask: what they\'re asking of her, if anything. "none": nothing, just chatting or a remark. "quick": '
+        f"something she can answer offhand (her favourite cake, her opinion, something most people know). "
+        f'"favor": something she can just do for them (remind someone, hop in vc, ping or dm someone, change her '
+        f'status). "effort": something that takes real work to do properly: a whole recipe, a step by step guide, '
+        f"an essay or homework, code, a long translation, a list of ten things, a detailed explanation. People in "
+        f"a chat don't do those on demand. \"expert\": a specific or technical fact she wouldn't know without "
+        f"looking it up. A message can ask two things: pick the bigger one (a favourite cake AND a recipe = "
+        f"effort).\n"
         f"answer: if they ask something {her} can answer from what she knows or what's in the chat, the gist of "
         f"the answer as a short note of what she'd say, in her own voice: when it's about {her} herself it's "
         f'"i" and "my", never her name or "she" (like "canberra, not sydney" or "yes, i\'m still here"). A note, '
         f"not a message: no greeting, and nothing about their feelings or private stuff unless they asked. For a "
-        f"story, what happens in it, start to end, in a few sentences. "
+        f"story, what happens in it, start to end, in a few sentences. For an effort ask, only the gist she'd know "
+        f'offhand in a few words (like "lemon drizzle, it\'s just a sponge with lemon syrup"), never the whole '
+        f"thing. "
         f"\"\" if it's just chatting, a greeting, or she needs a tool to find out. Her own earlier messages aren't "
         f"facts she has to stick to: if she said something odd or random and they're confused by it, the answer can "
         f'be her laughing it off ("lmao idk what i was on about") instead of repeating it.\n'
@@ -241,7 +258,7 @@ def plan_request(q, tools, now):
         f"{name} or her past chats with them that aren't in the recent chat, recall is for OTHER people they "
         f"mention:\n" + "\n".join(f"- {k}: {v}" for k, v in tools.items()) + _search_block(tools) + _owner_block(q)
     )
-    budget = (480 if q.owner else 400) + (20 if len(q.parts) >= 2 else 0) + (60 if q.remind else 0)
+    budget = (500 if q.owner else 420) + (20 if len(q.parts) >= 2 else 0) + (60 if q.remind else 0)
     return system, user, plan_schema(q.owner, len(q.parts), q.remind), budget
 
 

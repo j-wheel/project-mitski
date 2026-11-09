@@ -28,19 +28,37 @@ a throwaway account and don't be surprised if it gets banned.
 - Has feelings about people that grow or sour from how they treat her (how much she likes and trusts them, chemistry,
   and being hurt), and her own mood that shifts through the day. Both change how she talks and acts (see
   [Her feelings](#her-feelings))
-- Thinks before answering questions: web search, weather, time, math, scrolling back through the chat
+- Thinks before answering questions: web search, weather, time, math, scrolling back through the chat. Like anyone,
+  she sometimes doesn't bother looking something up and just says she doesn't know (`SKIP_LOOKUP_CHANCE`)
+- Handles asks like a person in a chat, not a helper: a big ask (a whole recipe, a guide, homework, code) gets
+  brushed off her way or the gist in a line, never the full thing (`BRUSH_OFF_CHANCE`), and a favour gets a casual
+  "bet", not a task confirmation. Drafts that slip into assistant talk ("i will remind him...", "here's a recipe",
+  numbered steps, "hope this helps") are redone in her own voice
 - Looks at images, gifs, stickers and short videos people send
 - Uses the server's emojis and stickers, reacts to messages, sends gifs (giphy)
 - Types like a person: lowercase, slang, a few quick messages in a row, typing delays, and now and then a small typo
   (a neighbouring key, two letters swapped, a missed letter) that she sometimes fixes a few seconds later, by editing
   the message or with a quick "*word"
 - Joins voice chats now and then and plays keyboard sounds while she types (she never talks in vc)
+- Picks up when someone calls her in dms or a group dm (`VOICE_CALLS`), after letting it ring a few seconds. In a
+  call her keyboard sounds play whenever she's typing, she hangs up when the call ends, when everyone else has left,
+  or when asked to in that dm. She never starts or rings a call herself, and calls from ignored users ring out
+- Doesn't leave people on read while she was offline: when she comes online she answers dms that came in meanwhile
+  (where they messaged last, from the last `DM_CATCH_UP_HOURS`), newest first and a minute or so apart, knowing she's
+  only just seeing them. Message requests she never answered are left alone (`DM_CATCH_UP`)
+- Accepts friend requests by herself a little while after they come in (`FRIEND_ACCEPT`, `FRIEND_ACCEPT_DELAY`), one
+  at a time, including ones sent while she was offline. Requests from bots, ignored users and anyone she knows is a
+  minor are left alone. If discord asks for a captcha she skips that request and doesn't try it again until she's
+  restarted
 - Sets reminders when asked ("remind me in 2h to drink water") and pings the person when it's time
 - Goes away in a server for a couple of hours now and then, more often late at night
 - Has a daily routine (`ROUTINE`) that her model plans a day ahead: classes or work, errands, friends, gaming and
   now and then a short trip, different every day (see [Her routine](#her-routine)). While she's busy she only looks
   at her phone now and then, so dms and pings can wait a while, dms the least
 - An owner account she listens to, with standing orders, quiet mode, status changes and dms
+- Writes herself a new custom status and emoji every hour (`STATUS_AUTO`, `STATUS_AUTO_MIN`), from her persona, her
+  mood and what she's up to, within discord's 128 characters. If her model's attempt isn't usable the old one stays
+  and she tries again in 10 minutes. Telling her to clear her status removes it until her next new one
 - Channels, ignored users and sleep settings can be changed from discord without restarting
 - Her owner can keep people out of her memory with `MEMORY_OPTOUT`
 
@@ -100,6 +118,8 @@ The generated config is deliberately generic. These are the options that decide 
   instead of an edit, and how many seconds later.
 - `MAX_LINES`, `LONG_REPLIES`, `LONG_REPLY_COOLDOWN_MIN`: how many messages a reply can be, and whether she
   sometimes writes a longer one when it's called for.
+- `BRUSH_OFF_CHANCE` and `SKIP_LOOKUP_CHANCE`: how often she brushes off a big ask instead of giving the gist, and
+  how often she doesn't bother googling something she doesn't know.
 - `IDENTITY_NOTE`: the rules she always keeps (no assistant talk, stays in character, will lie when someone
   sincerely asks if she's a bot). Leave it empty to use the built-in one, which calls her by the discord account's name.
 - `ACTIVITY_TYPE` and `ACTIVITY_TEXT`: what her discord status says she's doing.
@@ -184,9 +204,16 @@ in how she talks. `MOOD_SWING` makes her steadier or moodier.
 
 ## Commands
 
-Only `OWNER_ID` can use commands. Anyone else who tries one gets no answer at all, and she doesn't chat about it
-either. Set `COMMAND_CHANNEL` to a channel id and they only work in that channel; leave it at 0 and they work
-anywhere, dms included. The log goes to `LOG_CHANNEL`, which is a separate option.
+Only `OWNER_ID` can use commands, apart from `!mute` and `!unmute`, which amods can use too. Anyone else who tries
+one gets no answer at all, and she doesn't chat about it either. Set `COMMAND_CHANNEL` to a channel id and they only
+work in that channel; leave it at 0 and they work anywhere, dms included. The log goes to `LOG_CHANNEL`, which is a
+separate option.
+
+`!mute` and `!unmute` work on the channel you use them in, wherever `COMMAND_CHANNEL` points, and survive restarts
+(`MUTED_CHANNELS`). While a channel is muted she doesn't read it, talk, react, finish a reply she'd started or join
+it if it's a vc, and she leaves if she's in that vc. Muting a channel also mutes its threads. A reminder that was set
+there comes by dm instead. Amods (`AMOD`) are the users and roles you add with `!addp`, by user or role id, and those
+two commands are the only ones they can use.
 
 Commands start with `COMMAND_PREFIX` (`!` by default), which `!prefix <new>` changes live. `!help` lists all of
 this in discord, with the current prefix.
@@ -196,6 +223,14 @@ command                     alias   what it does
 !addchannel <id ...>        !ac     add channels she talks in
 !delchannel <id ...>        !dc     remove channels
 !listchannels               !lc     list her channels
+!mute                       !mu     she stops doing anything in this channel (amods too)
+!unmute                     !um     she picks this channel back up (amods too)
+!addp <user|role id ...>    !ap     let them use mute and unmute, and nothing else
+!delp <user|role id ...>    !dp     take that away again
+!listp                      !lp     list the users and roles that can mute her
+!modeset <mode> <server ...> !ms    set a server to safe, normal or unrestricted
+!mode [server]              !mo     the mode a server is in
+!modes                      !ml     what each mode means, and every server's mode
 !ignoreuser <id ...>        !iu     ignore users completely (also forgets them)
 !unignoreuser <id ...>      !uu     stop ignoring users
 !listusers                  !lu     list ignored users
@@ -208,6 +243,7 @@ command                     alias   what it does
 !set <who> <field> <value>  !sf     set a profile field
 !forgetme                   !fm     she deletes what she knows about you and stops remembering new things
 !rememberme                 !rm     undo that
+!printchat [--png|--pdf] <user|dm id>  !pc  a printout of her whole dm with someone, styled like discord
 
 !sleep <server> [hours]     !sl     send her away from a server for a while
 !wake <server|all>          !wk     bring her back
@@ -226,6 +262,13 @@ command                     alias   what it does
 !help                       !h      list the commands, their aliases and what they do
 ```
 
+`!printchat` takes a name, a user id or mention, or a dm (or group dm) channel id. It reads the whole dm and prints
+it like discord shows it (avatars, replies, images, embeds, reactions, emojis, days) into one pdf (`--pdf`, the
+default) or one long png (`--png`), using a headless chrome or edge (`PRINTCHAT_BROWSER`, found by itself if empty),
+and sends it in the channel you used the command in. If it's over discord's upload limit it's printed again without
+pictures, and if it's still too big it's saved in `data/exports/` instead. A chat over 150,000 px tall is too long
+for one image, so it tells you to use `--pdf` for that one.
+
 Server ids can also be given as any channel id in that server. Channel, user, sleep and prefix changes take effect
 right away and are saved to `mitski.yaml`.
 
@@ -236,6 +279,19 @@ or an empty one that looks fine if nobody's in voice.
 
 ## Safety and privacy
 
+- Every server has a mode, and it's `safe` until you change it with `!modeset <safe|normal|unrestricted> <server id>`,
+  including servers she was already in and ones she joins later (`!mode` shows one, `!modes` lists them all, and only
+  servers that aren't safe are stored, in `data/server_modes.json`).
+  - `safe` is nice and normal, PG-13: no swearing, nothing sexual, no flirting, no threats even as a joke, no insults
+    or roasting. The parts of her persona and feelings about flirting or roasting are left out of her prompt there, a
+    draft that breaks the rules is rewritten, her notes model double-checks replies (`SAFETY_REVIEW`), and any line
+    that still breaks them is dropped before sending. Reactions, stickers and gifs follow it too.
+  - `normal` is how she usually is, and `ADULT_CONTENT` below decides where she can get explicit.
+  - `unrestricted` lifts the limits on language, crude and dark humour and harsh roasts. `ADULT_CONTENT` still decides
+    where she can get explicit.
+  - In every mode, nothing explicit or flirty around someone she knows is a minor, and nothing sexual about anyone
+    under 18. Her custom status shows everywhere, so it's always held to `safe`.
+  - Dms have no mode and work as they always have, with no explicit content.
 - By default, flirting only gets explicit in channels discord marks as age-restricted
   (`ADULT_CONTENT: nsfw_channels`), never in dms and never when someone in the chat is a minor. Everywhere else she's
   told to keep it PG-13, and anything explicit that still comes out is held back before it's sent.
@@ -273,7 +329,7 @@ settle     wait for them to stop typing, read delay
 compose    build the context, plan (search, tools, owner requests, reminders), write a draft
 polish     clean the draft, keep it in her own voice, retry if it echoes people or sounds like an assistant, check it answers the question
 aim        check who the draft is really for, rewrite or redirect it, drop it if the chat moved on
-deliver    reply, ping or plain message, typed out line by line
+deliver    reply, ping or plain message, typed out line by line ("is typing" only shows here, never while the model works)
 aftercare  memory, reactions, dm follow-ups, the log channel
 ```
 

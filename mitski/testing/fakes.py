@@ -61,9 +61,11 @@ class FakeTyping:
 
     async def __aenter__(self):
         self.channel.typed += 1
+        self.channel.typing_now = getattr(self.channel, "typing_now", 0) + 1
         return self
 
     async def __aexit__(self, *exc):
+        self.channel.typing_now -= 1
         return False
 
 
@@ -78,6 +80,10 @@ class FakeGuild:
         self.stickers = []
         self.me = None
         self.afk_channel = None
+        self.roles = []
+
+    def get_role(self, rid):
+        return next((r for r in self.roles if r.id == rid), None)
 
     def get_member(self, uid):
         return next((m for m in self.members if m.id == uid), None)
@@ -104,8 +110,9 @@ class FakeChannel:
     def is_nsfw(self):
         return self.nsfw
 
-    async def history(self, limit=100):
-        for m in list(reversed(self.messages))[:limit]:
+    async def history(self, limit=100, oldest_first=False):
+        msgs = list(self.messages) if oldest_first else list(reversed(self.messages))
+        for m in msgs[:limit] if limit else msgs:
             yield m
 
     async def fetch_message(self, mid):
@@ -114,8 +121,9 @@ class FakeChannel:
                 return m
         raise discord.NotFound(_Response(404), "unknown message")
 
-    async def send(self, content=None, stickers=None, allowed_mentions=None, reference=None):
+    async def send(self, content=None, stickers=None, allowed_mentions=None, reference=None, file=None):
         msg = FakeMessage(self, self.client.user, content or "", reference=reference)
+        msg.file = file
         self.client.sent.append(msg)
         return msg
 
@@ -171,6 +179,8 @@ class FakeDM(discord.DMChannel):
     def __init__(self, client, user):
         self.id = snowflake()
         self.recipients = [user]
+        self.recipient = user
+        self._message_request = None
         self.me = client.user
         self._state = None
         self.client = client
@@ -186,6 +196,19 @@ class FakeDM(discord.DMChannel):
     send = FakeChannel.send
 
 
+class FakeRelationship:
+    def __init__(self, client, user, kind=discord.RelationshipType.incoming_request, fails=None):
+        self.client, self.user, self.type, self.fails = client, user, kind, fails
+        self.accepted = 0
+        client.relationships.append(self)
+
+    async def accept(self):
+        if self.fails:
+            raise self.fails
+        self.accepted += 1
+        self.type = discord.RelationshipType.friend
+
+
 class FakeClient:
     def __init__(self, name="mitski"):
         self.user = FakeUser(name)
@@ -195,13 +218,19 @@ class FakeClient:
         self.friends = []
         self.handlers = {}
         self.presence = None
+        self.private_channels = []
+        self.relationships = []
+
+    def get_relationship(self, uid):
+        return next((r for r in self.relationships if r.user.id == uid), None)
 
     def event(self, fn):
         self.handlers[fn.__name__] = fn
         return fn
 
     def get_channel(self, cid):
-        return next((c for g in self.guilds for c in g.channels if c.id == cid), None)
+        found = next((c for g in self.guilds for c in g.channels if c.id == cid), None)
+        return found or next((c for c in self.private_channels if c.id == cid), None)
 
     def get_guild(self, gid):
         return next((g for g in self.guilds if g.id == gid), None)

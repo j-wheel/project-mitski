@@ -1,4 +1,5 @@
 import re
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -6,7 +7,9 @@ from datetime import datetime
 import discord
 import yaml
 
+from mitski.admin import printchat
 from mitski.admin.registry import help_text, parse
+from mitski.chat.policy import ABOUT_MODES, MODES
 from mitski.config import ConfigError, prefix_problem
 from mitski.core import logs
 from mitski.core.component import Component
@@ -21,6 +24,8 @@ HOURS = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d+)?)(?![\d.])")
 SMALL_NUMBER = re.compile(r"(?<!\d)\d{1,6}(?!\d)")
 CANCEL_WORDS = re.compile(r"\b(?:cancel|remove|delete|forget)\b")
 MEMORY_COMMANDS = {"mem", "forget", "note", "set"}
+EXPORT_FLAG = re.compile(r"(?:^|\s)--(png|pdf)(?=\s|$)", re.I)
+MODE_WORD = re.compile(rf"\b({'|'.join(MODES)})\b", re.I)
 HAND_SET = {"like": "like", "trust": "trust", "chemistry": "spark", "spark": "spark", "hurt": "hurt"}
 
 
@@ -44,7 +49,26 @@ NO_SLEEP = LiveList(
     "- can sleep in {} again",
     "{} wasn't excluded",
 )
-NEEDS_IDS = {"addchannel", "delchannel", "ignoreuser", "unignoreuser", "sleepexclude", "sleepinclude", "sleep"}
+MUTED = LiveList("MUTED_CHANNELS", "+ muted in {}", "already muted in {}", "- unmuted in {}", "wasn't muted in {}")
+AMODS = LiveList(
+    "AMOD",
+    "+ {} can use mute and unmute",
+    "{} already can use mute and unmute",
+    "- {} can't use mute and unmute anymore",
+    "{} wasn't an amod",
+)
+MUTE_COMMANDS = {"mute", "unmute"}
+NEEDS_IDS = {
+    "addchannel",
+    "delchannel",
+    "ignoreuser",
+    "unignoreuser",
+    "sleepexclude",
+    "sleepinclude",
+    "sleep",
+    "addp",
+    "delp",
+}
 
 
 def pieces(text, size=CHUNK):
@@ -63,6 +87,15 @@ class AdminCommands(Component):
         where = self.cfg.COMMAND_CHANNEL
         return self.app.owner.is_owner(msg.author) and (not where or msg.channel.id == where)
 
+    def can_mute(self, msg):
+        """Her owner and amods, anywhere, since mute works on the channel it's used in. It's all amods can do."""
+        author, amod = msg.author, self.cfg.amod
+        return (
+            self.app.owner.is_owner(author)
+            or author.id in amod
+            or any(role.id in amod for role in getattr(author, "roles", None) or ())
+        )
+
     def guild_label(self, gid):
         g = self.messages.guild(gid)
         return f"{g.name} `{g.id}`" if g is not None else f"`{gid}` (she isn't in that server)"
@@ -78,6 +111,13 @@ class AdminCommands(Component):
         u = self.app.get_user(uid)
         return f"<@{uid}> `{uid}`" + (f" ({u.name})" if u is not None else "")
 
+    def amod_label(self, i):
+        for guild in self.app.guilds:
+            role = guild.get_role(i)
+            if role is not None:
+                return f"role @{role.name} `{i}` ({guild.name})"
+        return self.user_label(i)
+
     def server_ids(self, ids):
         return list(dict.fromkeys(getattr(self.messages.guild(i), "id", i) for i in ids))
 
@@ -89,13 +129,17 @@ class AdminCommands(Component):
         call = parse(msg.content, self.cfg.COMMAND_PREFIX)
         if call is None:
             return False
-        if self.can_use(msg):
+        call.channel = msg.channel
+        if self.can_mute(msg) if call.name in MUTE_COMMANDS else self.can_use(msg):
             await self._run(call, msg.channel)
         return True
 
     async def _run(self, call, channel):
         if call.name in MEMORY_COMMANDS:
             await self.memory.command(channel, call.name, call.rest.split())
+            return
+        if call.name == "printchat":
+            await self._printchat(call, channel)
             return
         try:
             out = await getattr(self, f"_{call.name}")(call)
@@ -168,6 +212,62 @@ class AdminCommands(Component):
     async def _delchannel(self, call):
         return self._remove(CHANNELS, self.cfg.channels, call.ids, self.channel_label, after=self.state.forget_channel)
 
+    def _left(self, channel):
+        """She drops whatever she was about to say there, and leaves if it's the vc she's in."""
+        self.state.forget_channel(channel.id)
+        if self.app.voice.where(channel.guild) == channel:
+            self.app.tasks.spawn(self.app.voice.leave("muted"), name="voice-leave")
+
+    async def _mute(self, call):
+        channel = call.channel
+        if getattr(channel, "guild", None) is None:
+            return ["that only works in server channels"]
+        return self._add(MUTED, self.cfg.muted, [channel.id], self.channel_label, after=lambda _: self._left(channel))
+
+    async def _unmute(self, call):
+        channel = call.channel
+        if getattr(channel, "guild", None) is None:
+            return ["that only works in server channels"]
+        return self._remove(MUTED, self.cfg.muted, [channel.id], self.channel_label)
+
+    async def _modeset(self, call):
+        word = MODE_WORD.search(call.rest)
+        if word is None or not call.ids:
+            return [f"usage: `{self.cfg.COMMAND_PREFIX}modeset <{'|'.join(MODES)}> <server id ...>`"]
+        mode, out = word.group(1).lower(), []
+        for gid in self.server_ids(call.ids):
+            if self.messages.guild(gid) is None:
+                out.append(f"she isn't in `{gid}`")
+                continue
+            self.app.policy.set_mode(gid, mode)
+            out.append(f"{self.guild_label(gid)} is now **{mode}**")
+        return out
+
+    async def _mode(self, call):
+        guild = self.messages.guild(call.ids[0]) if call.ids else getattr(call.channel, "guild", None)
+        if guild is None:
+            return ["give me a server id, dms don't have a mode" if not call.ids else f"she isn't in `{call.ids[0]}`"]
+        mode = self.app.policy.mode_in(guild)
+        return [f"{self.guild_label(guild.id)} is **{mode}**: {ABOUT_MODES[mode]}"]
+
+    async def _modes(self, call):
+        policy = self.app.policy
+        about = "\n".join(f"**{m}**: {ABOUT_MODES[m]}" for m in MODES)
+        servers = "\n".join(
+            f"{policy.mode_in(g)} · {self.guild_label(g.id)}" for g in sorted(self.app.guilds, key=lambda g: g.name)
+        )
+        return [f"{about}\n\n**servers**\n{servers or 'none'}\n-# dms aren't part of this"]
+
+    async def _addp(self, call):
+        return self._add(AMODS, self.cfg.amod, call.ids, self.amod_label)
+
+    async def _delp(self, call):
+        return self._remove(AMODS, self.cfg.amod, call.ids, self.amod_label)
+
+    async def _listp(self, call):
+        listing = [self.amod_label(i) for i in sorted(self.cfg.amod)]
+        return [f"**amods ({len(listing)})**\n" + ("\n".join(listing) or "nobody")]
+
     async def _ignoreuser(self, call):
         return self._add(
             IGNORED, self.cfg.ignored, call.ids, self.user_label, refuse=self._cant_ignore, after=self._forget_on_ignore
@@ -233,6 +333,84 @@ class AdminCommands(Component):
             for r in store.upcoming()
         ]
         return [f"**reminders ({len(rows)})**\n" + ("\n".join(rows) or "none")]
+
+    async def _printchat(self, call, channel):
+        """Her whole dm with someone, styled like discord, as a pdf (--pdf, the default) or one long png (--png), sent
+        to the channel the command was used in."""
+        flag = EXPORT_FLAG.search(call.rest)
+        kind = flag.group(1).lower() if flag else "pdf"
+        who = EXPORT_FLAG.sub(" ", call.rest).strip()
+        if not who:
+            await self.reply(
+                channel, f"usage: `{self.cfg.COMMAND_PREFIX}printchat [--png|--pdf] <user or dm channel id>`"
+            )
+            return
+        target = await self._dm_for(call, who)
+        if target is None:
+            await self.reply(channel, f"she doesn't have a dm with `{who}`")
+            return
+        browser = printchat.find_browser(self.cfg.PRINTCHAT_BROWSER)
+        if browser is None:
+            await self.reply(channel, "no chrome or edge found to print it with, set `PRINTCHAT_BROWSER` to one")
+            return
+        title, _, slug = printchat.describe(target, self.me)
+        await self.reply(channel, f"printing the dm {title}, this can take a minute..")
+        with tempfile.TemporaryDirectory(prefix="printchat-", ignore_cleanup_errors=True) as tmp:
+            try:
+                out, count, pictures = await printchat.make(self.app, target, tmp, browser, kind)
+            except (RuntimeError, OSError, discord.HTTPException) as e:
+                log.warning("printchat failed", exc_info=True)
+                await self.reply(channel, f"couldn't print it: {e}")
+                return
+            safe = re.sub(r"[^\w-]+", "-", slug).strip("-") or "chat"
+            name = f"dm-{safe}-{self.app.clock.now():%Y-%m-%d}.{kind}"
+            size = f"{out.stat().st_size / 1024 / 1024:.1f} MB"
+            if pictures is None:
+                keep = self.cfg.paths.data_file("exports") / name
+                keep.parent.mkdir(parents=True, exist_ok=True)
+                keep.write_bytes(out.read_bytes())
+                await self.reply(
+                    channel, f"it's {size}, too big for discord even without pictures. saved it to `{keep}`"
+                )
+                return
+            note = f"{count} messages, {size}" + ("" if pictures else ", without pictures (too big with them)")
+            sent = await channel.send(
+                note, file=discord.File(str(out), filename=name), allowed_mentions=discord.AllowedMentions.none()
+            )
+            self.state.command_replies.add(sent.id)
+        log.info("printed the dm %s: %s", title, note)
+
+    async def _dm_for(self, call, text):
+        """The dm (or group dm) a command means: a dm channel id, a user id or mention, or a name."""
+        for i in call.ids:
+            found = self.app.get_channel(i)
+            if isinstance(found, (discord.DMChannel, discord.GroupChannel)):
+                return found
+            user = self.app.get_user(i)
+            if user is None:
+                try:
+                    user = await self.app.fetch_user(i)
+                except discord.HTTPException:
+                    continue
+            return user.dm_channel or await user.create_dm()
+        if call.ids:
+            return None
+        who = text.lstrip("@").lower()
+        dms = [c for c in getattr(self.app.client, "private_channels", None) or [] if isinstance(c, discord.DMChannel)]
+
+        def names(c):
+            u = c.recipient
+            return {
+                str(n).lower() for n in (u.name, getattr(u, "display_name", ""), getattr(u, "global_name", "")) if n
+            }
+
+        for match in (lambda c: who in names(c), lambda c: any(n.startswith(who) for n in names(c))):
+            found = next((c for c in dms if match(c)), None)
+            if found is not None:
+                return found
+        uid, _ = self.memory.find_person(who)
+        user = self.app.get_user(int(uid)) if uid else None
+        return (user.dm_channel or await user.create_dm()) if user is not None else None
 
     async def _mood(self, call):
         return [self.app.feelings.report()]

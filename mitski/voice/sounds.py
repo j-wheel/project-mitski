@@ -41,6 +41,7 @@ class TypingSounds:
         self.counts = defaultdict(int)
         self.vc = None
         self.guild = None
+        self.everywhere = False
         self._generation = 0
         self._pending_stop = None
 
@@ -55,32 +56,42 @@ class TypingSounds:
             return "no typing sounds (ffmpeg isn't on PATH)"
         return f"typing sounds from {self.path.name}" + (f" ({self.duration:.0f}s)" if self.duration else "")
 
-    def attach(self, vc, guild_id):
-        self.vc, self.guild = vc, guild_id
+    def attach(self, vc, place, everywhere=False):
+        """place is the server her vc is in, or the dm the call is in. In a server vc they hear her keyboard while
+        she types in that server. In a call (everywhere) they hear it whenever she's typing to anyone."""
+        self.vc, self.guild, self.everywhere = vc, place, everywhere
 
     def detach(self):
         self.stop()
         self.vc = self.guild = None
+        self.everywhere = False
 
-    def typing_here(self, guild_id):
-        return self.counts.get(guild_id, 0) > 0
+    def typing_here(self, place):
+        return self.counts.get(place, 0) > 0
 
-    def started(self, guild_id):
-        self.counts[guild_id] += 1
+    def heard_typing(self):
+        """How many places she's typing in that the people in her vc or call can hear."""
+        return sum(self.counts.values()) if self.everywhere else self.counts.get(self.guild, 0)
+
+    def _hears(self, place):
+        return self.guild is not None and (self.everywhere or self.guild == place)
+
+    def started(self, place):
+        self.counts[place] += 1
         if self._pending_stop is not None:
             self._pending_stop.cancel()
             self._pending_stop = None
             if self.vc is not None and self.vc.is_playing():
                 return
-        if self.counts[guild_id] == 1 and self.guild == guild_id:
+        if self._hears(place) and self.heard_typing() == 1:
             self._play()
 
-    def stopped(self, guild_id):
-        self.counts[guild_id] = max(0, self.counts[guild_id] - 1)
-        if not self.counts[guild_id]:
-            self.counts.pop(guild_id, None)
-            if self.guild == guild_id:
-                self._pending_stop = asyncio.get_running_loop().call_later(0.3, self.stop)
+    def stopped(self, place):
+        self.counts[place] = max(0, self.counts[place] - 1)
+        if not self.counts[place]:
+            self.counts.pop(place, None)
+        if self._hears(place) and not self.heard_typing():
+            self._pending_stop = asyncio.get_running_loop().call_later(0.3, self.stop)
 
     def stop(self):
         self._pending_stop = None
@@ -112,7 +123,7 @@ class TypingSounds:
     def _ended(self, generation, err):
         if err:
             log.info("playback error: %r", err)
-        if generation == self._generation and self.guild is not None and self.typing_here(self.guild) and not err:
+        if generation == self._generation and self.guild is not None and self.heard_typing() and not err:
             self._play()
 
 
@@ -120,17 +131,18 @@ class Typing:
     def __init__(self, sounds, channel):
         self.sounds = sounds
         self.channel = channel
-        self.guild = getattr(getattr(channel, "guild", None), "id", None)
+        guild = getattr(channel, "guild", None)
+        self.place = getattr(guild, "id", None) if guild is not None else getattr(channel, "id", None)
         self.inner = None
 
     async def __aenter__(self):
         self.inner = self.channel.typing()
         await self.inner.__aenter__()
-        if self.guild is not None:
-            self.sounds.started(self.guild)
+        if self.place is not None:
+            self.sounds.started(self.place)
         return self
 
     async def __aexit__(self, *exc):
-        if self.guild is not None:
-            self.sounds.stopped(self.guild)
+        if self.place is not None:
+            self.sounds.stopped(self.place)
         return await self.inner.__aexit__(*exc)

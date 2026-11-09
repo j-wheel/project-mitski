@@ -103,13 +103,24 @@ class Profiles(Component):
     async def apply(self):
         status = STATUS_TYPES.get(str(self.app.routine.status()).lower(), discord.Status.online)
         kind, text = self.current_activity()
-        act = discord.Activity(type=ACTIVITY_TYPES[kind], name=text) if kind in ACTIVITY_TYPES and text else None
-        await self.app.change_presence(status=status, activity=act)
+        activities = [discord.Activity(type=ACTIVITY_TYPES[kind], name=text)] if kind in ACTIVITY_TYPES and text else []
+        custom = self.app.custom_status.activity()
+        if custom is not None:
+            activities.append(custom)
+        await self.app.change_presence(status=status, activities=activities)
 
     def own_status(self):
         kind, text = self.current_activity()
         verb = VERBS.get(kind)
-        return f"Your discord status says you're {verb} {text}." if verb and text else ""
+        custom = self.app.custom_status.current
+        return " ".join(
+            line
+            for line in (
+                f"Your discord status says you're {verb} {text}." if verb and text else "",
+                f'The custom status under your name says "{custom[0]}".' if custom else "",
+            )
+            if line
+        )
 
     def blurb(self, user, guild):
         if not self.cfg.PROFILES or user is None:

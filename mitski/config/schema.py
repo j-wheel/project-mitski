@@ -22,6 +22,11 @@ SECTIONS = (
             Option(
                 "CHANNELS", [], "channel ids she talks in (!addchannel / !delchannel / !listchannels change this live)"
             ),
+            Option(
+                "MUTED_CHANNELS",
+                [],
+                "channel ids she's muted in: she doesn't read, talk, react or do anything there (!mute / !unmute change this live)",
+            ),
             Option("LOG_CHANNEL", 0, "channel id for the relay log, 0 = off"),
             Option("COMMAND_CHANNEL", 0, "the only channel commands work in, 0 = they work anywhere, dms too"),
             Option("COMMAND_PREFIX", "!", "what commands start with (!prefix changes this live)"),
@@ -59,6 +64,13 @@ SECTIONS = (
             Option("ACTIVITY_TYPE", "", "playing, watching, listening, competing, or empty for none"),
             Option("ACTIVITY_TEXT", "", 'activity text, e.g. "Minecraft"'),
             Option("STATUS", "online", "online, idle, dnd, invisible"),
+            Option(
+                "STATUS_AUTO",
+                True,
+                "her model writes her a new custom status and emoji every STATUS_AUTO_MIN minutes, from her persona, "
+                "her mood and what she's up to (data/status.json). discord allows 128 characters",
+            ),
+            Option("STATUS_AUTO_MIN", 60, "minutes between new custom statuses"),
         ),
     ),
     Section(
@@ -67,7 +79,7 @@ SECTIONS = (
             Option(
                 "OWNER_ID",
                 0,
-                'discord user id: she does what they ask, follows their standing orders ("stop pinging sam"), and they can tell her to be quiet, change her status or dm someone. the only person who can use the commands, 0 = nobody can',
+                'discord user id: she does what they ask, follows their standing orders ("stop pinging sam"), and they can tell her to be quiet, change her status or dm someone. the only person who can use the commands (AMOD can use mute and unmute), 0 = nobody can',
             ),
             Option(
                 "OWNER_NOTE",
@@ -76,6 +88,11 @@ SECTIONS = (
             ),
             Option("OWNER_CAN_DM", True, "her owner can tell her to dm people"),
             Option("OWNER_ORDERS_MAX", 15, "standing orders she keeps (data/owner.json), oldest go first"),
+            Option(
+                "AMOD",
+                [],
+                "user and role ids that can use !mute and !unmute, and no other commands (!addp / !delp / !listp change this live)",
+            ),
         ),
     ),
     Section(
@@ -213,6 +230,13 @@ SECTIONS = (
                 "someone asks a few different things, in one message or a few: she's told to answer each one, and it goes out as quick messages, one longer message, or a reply to each question, whatever fits. false = no special handling, she just replies to all of it",
             ),
             Option(
+                "BRUSH_OFF_CHANCE",
+                0.5,
+                "someone asks for something that takes real work (a whole recipe, a guide, homework, code, a long list): "
+                "chance she brushes it off her way, otherwise she gives the gist in a line. never the full thing. less "
+                "with people she likes and her owner, more when she's busy or tired (needs THINKING)",
+            ),
+            Option(
                 "PINGS",
                 True,
                 'she can @ping people: sometimes instead of a discord reply, and when she writes "@name" herself',
@@ -236,6 +260,13 @@ SECTIONS = (
             ),
             Option("VOICE_TALK_CHANCE", 0.03, 'chance per message that talks about vc ("hop in vc") that she joins'),
             Option("VOICE_ASKED_CHANCE", 0.35, "someone asks her to join (or leave) vc. her owner: always"),
+            Option(
+                "VOICE_CALLS",
+                True,
+                "she picks up when someone calls her in dms or a group dm, and her typing sounds play in the call "
+                "whenever she types. she never calls anyone herself. calls from ignored users ring out",
+            ),
+            Option("VOICE_CALL_PICKUP_SEC", [3, 12], "seconds she lets a call ring before picking up"),
             Option(
                 "VOICE_SOLO_CHANCE",
                 0.02,
@@ -454,6 +485,12 @@ SECTIONS = (
             ),
             Option("SEARCH_MAX_PER_HOUR", 30, "max searches per hour"),
             Option(
+                "SKIP_LOOKUP_CHANCE",
+                0.25,
+                "chance she doesn't bother googling something she doesn't know and just says so, like anyone would. "
+                "never when they ask her to look it up, and never for her owner",
+            ),
+            Option(
                 "THINKING",
                 True,
                 "before answering questions/requests she works out what they want and checks things first (search, weather, time, math, a closer look at a picture, what she knows about someone)",
@@ -619,11 +656,33 @@ SECTIONS = (
             ),
             Option("DM_PROMISE_DELAY", [20, 90], "seconds before she follows through"),
             Option("DM_PROMISE_COOLDOWN_MIN", 30, "min minutes between kept promises to the same person"),
+            Option(
+                "DM_CATCH_UP",
+                True,
+                "when she comes online, she answers dms that came in while she was offline (where they messaged "
+                "last), newest first and a minute or so apart, instead of leaving them on read. message requests "
+                "she never answered are left alone",
+            ),
+            Option("DM_CATCH_UP_HOURS", 48, "only dms from the last this many hours"),
+            Option("DM_CATCH_UP_MAX", 10, "most dms she catches up on when she comes online"),
+            Option(
+                "FRIEND_ACCEPT",
+                True,
+                "she accepts incoming friend requests by herself, one at a time, including ones that came in while "
+                "she was offline. requests from bots, ignored users and anyone she knows is a minor are left alone",
+            ),
+            Option("FRIEND_ACCEPT_DELAY", [20, 300], "seconds after a friend request before she accepts it"),
         ),
     ),
     Section(
         "safety and privacy",
         (
+            Option(
+                "SAFETY_REVIEW",
+                True,
+                "in safe servers (!modeset, !modes), her notes model double-checks each reply for flirting, threats "
+                "and meanness the word lists can't see. one small model call per reply",
+            ),
             Option(
                 "ADULT_CONTENT",
                 "nsfw_channels",
@@ -666,6 +725,11 @@ SECTIONS = (
             Option("LLM_PAUSE_AFTER", 3, "failed model calls in a row before she stops trying for a while"),
             Option("LLM_PAUSE_SEC", 60.0, "how long she waits before trying the model again after that"),
             Option("LOG_LEVEL", "INFO", "console log level: DEBUG, INFO, WARNING"),
+            Option(
+                "PRINTCHAT_BROWSER",
+                "",
+                "chrome, edge or chromium that !printchat prints the pdf with (full path). empty = find one",
+            ),
             Option("METRICS_WINDOW", 200, "replies kept for the latency numbers in !stats"),
         ),
     ),

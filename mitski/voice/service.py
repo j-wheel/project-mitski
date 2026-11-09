@@ -24,7 +24,14 @@ VC_TALK = re.compile(
 )
 INVITE = re.compile(r"\b(?:join|come|hop|jump|get)\b.{0,25}\b(?:vc|call|voice)\b|\b(?:vc|call)\s*\?", re.I)
 LEAVE = re.compile(
-    r"\b(?:leave|get out of|dip from|disconnect from|dc from|go out of|get off)\b.{0,15}\b(?:vc|call|voice)\b", re.I
+    r"\b(?:leave|get out of|dip from|disconnect from|dc from|go out of|get off)\b.{0,15}\b(?:vc|call|voice)\b"
+    r"|\bhang(?:ing)? up\b",
+    re.I,
+)
+CALL_ALONE_WAIT = (20, 60)
+CALL_NOTE = (
+    "You're in a call with {who} here (you picked up when they called). You don't talk in calls, you just hang out and "
+    "type, and you can't really make out what they say, so don't make up things they said in the call."
 )
 DECISION_NOTES = {
     "join": 'You\'re about to hop into the vc with them. If it fits, say so casually (like "omw" or "ok joining"). '
@@ -43,7 +50,7 @@ class Voice(Component):
         self.sounds = TypingSounds(
             app.cfg.paths.sounds / (self.cfg.VOICE_ASMR_FILE or "asmr.mp3"), self.cfg.VOICE_ASMR_VOLUME
         )
-        self.rooms = RoomPicker(self.people)
+        self.rooms = RoomPicker(self.people, muted=lambda channel: self.messages.muted(channel))
         self.problem = None
         self.vc = None
         self.session = None
@@ -52,6 +59,7 @@ class Voice(Component):
         self.joins = deque()
         self.vc_talk = {}
         self.decisions = BoundedDict(300)
+        self.answering = set()
 
     @property
     def active(self):
@@ -103,9 +111,23 @@ class Voice(Component):
         return out
 
     def where(self, guild):
-        if self.vc is None or self.session is None or getattr(guild, "id", None) != self.session.guild:
+        if self.vc is None or self.session is None or self.session.call:
+            return None
+        if getattr(guild, "id", None) != self.session.guild:
             return None
         return self.vc.channel
+
+    def in_call(self, channel):
+        s = self.session
+        return self.vc is not None and s is not None and s.call and s.guild == getattr(channel, "id", None)
+
+    def call_note(self, channel, call_name):
+        if not self.in_call(channel):
+            return ""
+        call = getattr(self.vc.channel, "call", None)
+        users = [self.app.get_user(u) for u in self._call_people(call)]
+        names = [call_name(u) for u in users if u is not None]
+        return CALL_NOTE.format(who=", ".join(names[:6]) or "them")
 
     def note(self, guild, call_name):
         channel = self.where(guild)
@@ -128,6 +150,18 @@ class Voice(Component):
 
     def _away(self, guild_id):
         return self.app.away.state(guild_id) is not None
+
+    def heard_in_dm(self, msg):
+        """In the dm she's in a call in, she can be asked to leave it, like in a server vc. She never joins or starts
+        a call from a message: she only ever picks up when someone calls her."""
+        if not self.active or not self.in_call(msg.channel) or not LEAVE.search(msg.content or ""):
+            return None
+        boss = self._is_owner(msg.author.id)
+        leave = boss or random.random() < self.cfg.VOICE_ASKED_CHANCE
+        if leave:
+            why = "told to hang up" if boss else "asked to hang up"
+            self.app.tasks.spawn(self.leave(why, delay=random.uniform(2, 8)), name="call-leave")
+        return self._decide(msg, "leave" if leave else "stay")
 
     def heard(self, msg, to_her):
         if not self.active or msg.guild is None or self._away(msg.guild.id):
@@ -237,6 +271,99 @@ class Voice(Component):
             f"**joined vc** {channel.guild.name} / {channel.name} ({why}), {len(ids)} people in it"
         )
 
+    # ---- calls in dms and group dms: she picks up when someone calls her, and never calls anyone herself ----
+
+    def _rung(self, call):
+        me = self.me
+        return me is not None and any(getattr(u, "id", None) == me.id for u in (getattr(call, "ringing", None) or []))
+
+    def _call_people(self, call):
+        if call is None:
+            return []
+        me = getattr(self.me, "id", None)
+        return [u for u in (getattr(call, "voice_states", None) or {}) if u != me and u not in self.cfg.ignored]
+
+    def call_changed(self, call):
+        """A call started or changed in a dm or group dm. If it's ringing her, she lets it ring a little, then picks
+        up. Calls from people she ignores just ring out."""
+        if not (self.active and self.cfg.VOICE_CALLS) or not self._rung(call):
+            return
+        cid = call.channel.id
+        if cid in self.answering or self.in_call(call.channel):
+            return
+        caller = getattr(call, "initiator", None)
+        if caller is not None and caller.id in self.cfg.ignored:
+            log.info("%s is calling her, but she ignores them", caller)
+            return
+        low, high = (list(self.cfg.VOICE_CALL_PICKUP_SEC) + [3, 12])[:2]
+        self.answering.add(cid)
+        self.app.tasks.spawn(self.pick_up(call, random.uniform(min(low, high), max(low, high))), name=f"pickup-{cid}")
+
+    async def pick_up(self, call, delay):
+        cid = call.channel.id
+        try:
+            await asyncio.sleep(delay)
+            live = getattr(call.channel, "call", None) or call
+            if not self._rung(live):
+                log.info("the call stopped ringing before she picked up")
+                return
+            if self.vc is not None:
+                await self.leave("someone called her")
+            if self.vc is not None or self.busy:
+                return
+            self.busy = True
+            try:
+                vc = await live.connect(timeout=30, reconnect=True)
+            except Exception:
+                log.warning("couldn't pick up the call", exc_info=True)
+                return
+            finally:
+                self.busy = False
+            ids = self._call_people(live)
+            caller = getattr(live, "initiator", None)
+            who = self._call_label(live.channel)
+            self.vc = vc
+            self.session = Session(
+                guild=cid,
+                stay_until=float("inf"),
+                why=f"{caller or 'someone'} called her",
+                solo=False,
+                owner=next((u for u in ids if self._is_owner(u)), None),
+                owner_seen=any(self._is_owner(u) for u in ids),
+                peak=len(ids),
+                had_company=bool(ids),
+                call=True,
+            )
+            self.sounds.attach(vc, cid, everywhere=True)
+            log.info("picked up a call: %s, %d people in it", who, len(ids))
+            await self.app.relay.post(f"**picked up a call** {who}, {len(ids)} people in it")
+        finally:
+            self.answering.discard(cid)
+
+    def call_ended(self, call):
+        self.answering.discard(call.channel.id)
+        if self.in_call(call.channel):
+            self.app.tasks.spawn(self.leave("the call ended"), name="call-ended")
+
+    def _call_label(self, channel):
+        name = getattr(channel, "name", None)
+        if name:
+            return f"group dm {name}"
+        recipient = getattr(channel, "recipient", None)
+        return f"dm with {recipient}" if recipient is not None else "a dm call"
+
+    async def _check_call(self, vc, s):
+        ids = self._call_people(getattr(vc.channel, "call", None))
+        now = time.time()
+        s.peak = max(s.peak, len(ids))
+        if ids:
+            s.had_company, s.alone_since, s.alone_wait = True, None, None
+            return
+        if s.alone_since is None:
+            s.alone_since, s.alone_wait = now, random.uniform(*CALL_ALONE_WAIT)
+        if now - s.alone_since >= s.alone_wait:
+            await self.leave("everyone else hung up")
+
     async def move(self, channel, why):
         if self.vc is None or self.busy or not joinable(channel):
             return
@@ -257,14 +384,16 @@ class Voice(Component):
         if self.vc is None or self.busy:
             return
         for _ in range(60):
-            if not self.sounds.typing_here(self.session.guild):
+            if not self.sounds.heard_typing():
                 break
             await asyncio.sleep(1)
+        if self.vc is None:
+            return
         vc, session = self.vc, self.session
         self.busy = True
         try:
             self.sounds.stop()
-            name = getattr(vc.channel, "name", "vc")
+            name = self._call_label(vc.channel) if session.call else getattr(vc.channel, "name", "vc")
             await vc.disconnect(force=False)
             log.info("left %s after %.0f min (%s)", name, session.minutes, why)
             await self.app.relay.post(f"**left vc** {name} after {session.minutes:.0f} min ({why})")
@@ -308,7 +437,7 @@ class Voice(Component):
             for g in self.app.her_guilds()
             if not self._away(g.id) and self.app.routine.can_hang_out_in(g.id)
             for c in g.voice_channels
-            if joinable(c)
+            if joinable(c) and not self.messages.muted(c)
         ]
         random.shuffle(channels)
         for channel in channels:
@@ -338,6 +467,9 @@ class Voice(Component):
             if s.minutes > 1:
                 log.info("lost the voice connection")
                 self._reset(self.cfg.VOICE_COOLDOWN_MIN * 60)
+            return
+        if s.call:
+            await self._check_call(vc, s)
             return
         gid = vc.channel.guild.id
         if not self.app.routine.can_hang_out_in(gid):

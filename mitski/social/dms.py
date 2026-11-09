@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import discord
 
-from mitski.chat.messages import clean, short_name
+from mitski.chat.messages import NORMAL_TYPES, clean, short_name
 from mitski.chat.patterns import NEVER
 from mitski.core import logs
 from mitski.core.component import Component
@@ -31,6 +31,9 @@ USER_ASKS_DM = re.compile(
 )
 AGREE = re.compile(r"\b(ok(ay)?|kk?|sure|bet|fine|yes|yea|yeah|ya+|yup|alr|alright|omw|on it|say less|deal)\b", re.I)
 REFUSE = re.compile(r"\b(no+|nah|nope|never|ew+|later|maybe|not)\b", re.I)
+CATCH_UP_START = (30, 90)
+CATCH_UP_GAP = (40, 120)
+FRIEND_GAP = (20, 60)
 
 
 def find_promise(text):
@@ -43,6 +46,114 @@ def find_promise(text):
 
 
 class DirectMessages(Component):
+    def __init__(self, app):
+        super().__init__(app)
+        self.friend_requests = set()
+        self.friend_skipped = set()
+        self.accepting = asyncio.Lock()
+
+    def accept_pending(self):
+        """Friend requests that came in while she was offline."""
+        for relationship in list(getattr(self.app.client, "relationships", None) or []):
+            self.friend_request(relationship)
+
+    def friend_request(self, relationship):
+        """Someone wants to be her friend: she accepts a little later, unless it's someone she'd never talk to."""
+        user = relationship.user
+        if not self.cfg.FRIEND_ACCEPT or relationship.type is not discord.RelationshipType.incoming_request:
+            return
+        if user.id in self.friend_requests or user.id in self.friend_skipped:
+            return
+        if user.bot or user.id in self.cfg.ignored or self.app.ages.is_minor(user):
+            log.info("%s sent her a friend request, leaving it", user)
+            return
+        self.friend_requests.add(user.id)
+        self.app.tasks.spawn(self._accept(user), name="friend-request")
+
+    async def _accept(self, user):
+        """One at a time and spaced out, and only if the request is still there by then."""
+        try:
+            await asyncio.sleep(random.uniform(*self.cfg.FRIEND_ACCEPT_DELAY))
+            async with self.accepting:
+                relationship = self.app.client.get_relationship(user.id)
+                if relationship is None or relationship.type is not discord.RelationshipType.incoming_request:
+                    log.info("%s's friend request is gone", user)
+                    return
+                try:
+                    await relationship.accept()
+                except discord.CaptchaRequired:
+                    self.friend_skipped.add(user.id)
+                    log.warning("discord wants a captcha for %s's friend request, skipping it until she restarts", user)
+                    return
+                except discord.HTTPException as e:
+                    log.warning("couldn't accept %s's friend request: %s", user, e)
+                    return
+                log.info("accepted %s's friend request", user)
+                await asyncio.sleep(random.uniform(*FRIEND_GAP))
+        finally:
+            self.friend_requests.discard(user.id)
+
+    async def catch_up(self):
+        """When she comes online, she answers dms that came in while she was offline (where they messaged last),
+        newest first and a minute or so apart, like catching up on her phone, instead of leaving people on read."""
+        if not self.cfg.DM_CATCH_UP:
+            return
+        await asyncio.sleep(random.uniform(*CATCH_UP_START))
+        missed = []
+        for channel in list(getattr(self.app.client, "private_channels", None) or []):
+            if not isinstance(channel, discord.DMChannel):
+                continue
+            try:
+                found = await self._missed(channel)
+            except discord.HTTPException as e:
+                log.info("couldn't read the dm with %s: %s", getattr(channel, "recipient", "?"), e)
+                continue
+            if found:
+                missed.append(found)
+        missed.sort(key=lambda m: m.id, reverse=True)
+        if missed:
+            log.info("%d dms came in while she was offline, catching up", len(missed))
+        for i, msg in enumerate(missed[: self.cfg.DM_CATCH_UP_MAX]):
+            if i:
+                await asyncio.sleep(random.uniform(*CATCH_UP_GAP))
+            if self._answered_since(msg):
+                continue
+            age = (discord.utils.utcnow() - msg.created_at).total_seconds()
+            log.info("catching up on %s's dm from %.0f min ago: %r", msg.author, age / 60, cut(msg.content, 60))
+            self.app.router.catch_up(msg, age)
+
+    async def _missed(self, channel):
+        """Their last message in a dm, if it still needs an answer from her, else None. A dm whose newest message is
+        older than the window is skipped without asking discord for its history, so a long dm list costs nothing."""
+        newest = getattr(channel, "last_message_id", None)
+        window = self.cfg.DM_CATCH_UP_HOURS * 3600
+        if newest and (discord.utils.utcnow() - discord.utils.snowflake_time(newest)).total_seconds() > window:
+            return None
+        msgs = [m async for m in channel.history(limit=10) if m.type in NORMAL_TYPES]
+        if not msgs:
+            return None
+        last = msgs[0]
+        author = last.author
+        if author.id == self.me.id or author.bot or author.id in self.cfg.ignored or not self.messages.usable(last):
+            return None
+        if (discord.utils.utcnow() - last.created_at).total_seconds() > window:
+            return None
+        try:
+            request = bool(channel.is_message_request())
+        except AttributeError:
+            request = False
+        if request and not any(m.author.id == self.me.id for m in msgs):
+            log.info("%s sent her a message request, leaving it", author)
+            return None
+        return last
+
+    def _answered_since(self, msg):
+        """A new message came in (she'll answer that one anyway), or she already replied since she came online."""
+        if (msg.channel.id, msg.author.id) in self.state.waiting:
+            return True
+        last = self.app.sender.last_sent.get(msg.channel.id)
+        return last is not None and last > msg.id
+
     def is_friend(self, user):
         friends = getattr(self.app.client, "friends", None) or ()
         return any(getattr(getattr(r, "user", None), "id", None) == user.id for r in friends)

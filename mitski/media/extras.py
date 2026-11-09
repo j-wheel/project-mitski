@@ -36,7 +36,13 @@ class Extras(Component):
         self.warned = set()
 
     async def pick_sticker(self, guild, lines):
-        stickers = self.app.emojis.stickers(guild)[:40]
+        stickers = [
+            s
+            for s in self.app.emojis.stickers(guild)
+            if self.app.policy.fits(
+                guild, f"{s.name} {s.description or ''} {self.app.vision.sticker_caption(s.id) or ''}"
+            )
+        ][:40]
         if not stickers:
             return None
         text = " ".join(lines)
@@ -78,13 +84,19 @@ class Extras(Component):
             return f"{self.cfg.GIF_STYLE} {random.choice(GIF_GENERIC)}".strip()
         return None
 
-    async def find_gif(self, text):
+    async def find_gif(self, text, rating=None):
         if not self.cfg.GIPHY_KEY:
             return None
         query = self.gif_query(text)
         if not query:
             return None
-        params = {"api_key": self.cfg.GIPHY_KEY, "q": query, "limit": 25, "rating": self.cfg.GIF_RATING, "lang": "en"}
+        params = {
+            "api_key": self.cfg.GIPHY_KEY,
+            "q": query,
+            "limit": 25,
+            "rating": rating or self.cfg.GIF_RATING,
+            "lang": "en",
+        }
         try:
             async with self.app.http.get("https://api.giphy.com/v1/gifs/search", params=params) as r:
                 if r.status != 200:
@@ -160,7 +172,7 @@ class Extras(Component):
         if upload:
             self.warn_once(channel, "gif", "no 'embed links' permission, so she uploads gifs as files here")
         try:
-            gif = await self.find_gif("\n".join(lines))
+            gif = await self.find_gif("\n".join(lines), self.app.policy.gif_rating(channel))
             if not gif:
                 return None, None
             if upload:
@@ -169,12 +181,16 @@ class Extras(Component):
                     return None, None
                 name = re.sub(r"[^\w-]+", "-", gif["title"])[:60].strip("-") or "gif"
                 await asyncio.sleep(random.uniform(0.8, 2.5))
+                if self.messages.muted(channel):
+                    return None, None
                 async with self.app.voice.typing_in(channel):
                     msg = await channel.send(
                         file=discord.File(io.BytesIO(data), filename=f"{name}.gif"), allowed_mentions=NO_PINGS
                     )
                 return gif["link"], msg
             await asyncio.sleep(random.uniform(0.8, 2.5))
+            if self.messages.muted(channel):
+                return None, None
             msg = await channel.send(gif["link"], allowed_mentions=NO_PINGS)
             return gif["link"], msg
         except Exception:
@@ -182,6 +198,8 @@ class Extras(Component):
             return None, None
 
     async def after_reply(self, channel, lines):
+        if self.messages.muted(channel):
+            return None, None
         guild = getattr(channel, "guild", None)
         if (
             (guild is not None or self.app.emojis.external_ok(None, "stickers"))
@@ -192,6 +210,8 @@ class Extras(Component):
                 sticker = await self.pick_sticker(guild, lines)
                 if sticker is not None:
                     await asyncio.sleep(random.uniform(0.8, 2.5))
+                    if self.messages.muted(channel):
+                        return None, None
                     msg = await channel.send(stickers=[sticker], allowed_mentions=NO_PINGS)
                     return f"sticker: {sticker.name}", msg
             except Exception:

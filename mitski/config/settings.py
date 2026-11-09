@@ -22,6 +22,8 @@ DEFAULT_IDENTITY = (
 )
 LIVE_LISTS = {
     "CHANNELS": "channel ids she talks in (!addchannel / !delchannel / !listchannels change this live)",
+    "MUTED_CHANNELS": "channel ids she's muted in: she doesn't read, talk, react or do anything there (!mute / !unmute change this live)",
+    "AMOD": "user and role ids that can use !mute and !unmute, and no other commands (!addp / !delp / !listp change this live)",
     "IGNORE_USERS": "user ids she ignores completely (!ignoreuser / !unignoreuser / !listusers change this live)",
     "SLEEP_EXCLUDE": "server ids where she never goes to sleep by herself, and where her routine's sleep doesn't count "
     "either (!sleepexclude / !sleepinclude change this live)",
@@ -106,6 +108,8 @@ class Settings:
         object.__setattr__(self, "_secrets", {k: str(values.get(k) or "").strip() for k in SECRET_KEYS})
         object.__setattr__(self, "paths", paths)
         object.__setattr__(self, "channels", {int(c) for c in self._values["CHANNELS"]})
+        object.__setattr__(self, "muted", {int(c) for c in self._values["MUTED_CHANNELS"]})
+        object.__setattr__(self, "amod", {int(i) for i in self._values["AMOD"]})
         object.__setattr__(self, "ignored", {int(u) for u in self._values["IGNORE_USERS"]})
         object.__setattr__(self, "sleep_exclude", {int(g) for g in self._values["SLEEP_EXCLUDE"]})
         object.__setattr__(self, "memory_optout", {int(u) for u in self._values["MEMORY_OPTOUT"]})

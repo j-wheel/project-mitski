@@ -43,8 +43,9 @@ def channel():
 def test_adult_only_in_age_restricted_channels(make_cfg, channel, mode, nsfw, minors, adult):
     channel.nsfw = nsfw
     policy = ContentPolicy(App(make_cfg(ADULT_CONTENT=mode)))
+    policy.modes[channel.guild.id] = "normal"
     assert policy.adult_ok(channel, minors=minors) is adult
-    assert policy.note(channel, minors=minors) == (ADULT_NOTE if adult else SAFE_NOTE)
+    assert (ADULT_NOTE if adult else SAFE_NOTE) in policy.note(channel, minors=minors)
 
 
 def test_dms_never_count_as_adult(make_cfg):

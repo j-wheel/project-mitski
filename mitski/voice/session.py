@@ -18,6 +18,7 @@ class Session:
     owner_left: float | None = None
     leave_at: float | None = None
     extended: int = 0
+    call: bool = False
 
     @property
     def minutes(self):

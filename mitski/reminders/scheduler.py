@@ -30,7 +30,10 @@ class ReminderScheduler(Component):
         existing = self.store.by_source(target.id)
         if existing is not None:
             when = datetime.fromtimestamp(existing.due, now.tzinfo)
-            return [f"You already set that reminder: {describe(when, now)}. Just confirm it, short."]
+            return [
+                f"You already said you'd do that reminder ({describe(when, now)}), so just say so casually, like "
+                f'"already on it".'
+            ]
         guild = getattr(channel, "guild", None)
         who = self.messages.resolve_person(request.get("who"), guild, asker=target.author, context=[target])
         if who is None:
@@ -53,8 +56,9 @@ class ReminderScheduler(Component):
             f"{describe(when, now)}: {what}"
         )
         return [
-            f"You'll remind {them} {describe(when, now)}: {what}. You'll ping {them} then. Tell "
-            f"{self.messages.call(target.author)} ok, short and casual (you can say when)."
+            f"You'll remind {them} {describe(when, now)} ({what}) and ping {them} then. Let "
+            f'{self.messages.call(target.author)} know like a friend would, short and casual ("bet", "ok ill bug '
+            f"him at 8\"), not like an assistant confirming it, and don't repeat their whole request back."
         ]
 
     def _problem(self, when, now, asker):
@@ -94,7 +98,7 @@ class ReminderScheduler(Component):
             + ("You're a bit late with it. " if time.time() - r.due > 600 else "")
             + "Write the reminder to them now, short and in your own words, like texting a friend."
         )
-        persona = self.app.situation.persona(user, getattr(channel, "guild", None))
+        persona = self.app.situation.persona(user, getattr(channel, "guild", None), channel=channel)
         names = sorted({short_name(user), self.messages.call(user)} | self.messages.speaker_names())
         try:
             text = await self.llm.generate(self.llm.prompt([["user", ""]], persona, note))

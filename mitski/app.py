@@ -48,6 +48,7 @@ from mitski.social.presence import Profiles
 from mitski.social.privacy import PrivacyCommands
 from mitski.social.routine import Routine
 from mitski.social.sleep import SleepCycle
+from mitski.social.status import CustomStatus
 from mitski.vision.service import Vision
 from mitski.voice.service import Voice
 
@@ -93,6 +94,7 @@ class App:
         self.helper = HelperModel(self)
         self.memory = Memory(self)
         self.feelings = Feelings(self)
+        self.custom_status = CustomStatus(self)
 
         self.messages = MessageView(self)
         self.context = ContextBuilder(self)
@@ -180,6 +182,26 @@ class App:
             self.voice.state_update(member, before, after)
 
         @client.event
+        async def on_call_create(call):
+            self.voice.call_changed(call)
+
+        @client.event
+        async def on_call_update(before, after):
+            self.voice.call_changed(after)
+
+        @client.event
+        async def on_call_delete(call):
+            self.voice.call_ended(call)
+
+        @client.event
+        async def on_relationship_add(relationship):
+            self.dms.friend_request(relationship)
+
+        @client.event
+        async def on_relationship_update(before, after):
+            self.dms.friend_request(after)
+
+        @client.event
         async def on_presence_update(before, after):
             if after.id not in self.cfg.ignored:
                 self.profiles.track(before, after)
@@ -197,6 +219,7 @@ class App:
         if not self.started:
             self.started = True
             await self._start()
+        self.dms.accept_pending()
         if not self.cfg.PROFILES:
             for guild in self.guilds:
                 self.state.known_names[guild.id].update(
@@ -224,14 +247,18 @@ class App:
             ("sleep", self.sleep.run()),
             ("routine", self.routine.run()),
             ("feelings", self.feelings.run()),
+            ("custom-status", self.custom_status.run()),
             ("reminders", self.scheduler.run()),
         ):
             self.tasks.spawn(loop, name=name)
         self.tasks.spawn(self.vision.index_stickers(self._sticker_guilds()), name="sticker-index")
+        self.tasks.spawn(self.dms.catch_up(), name="dm-catch-up")
 
     def _load(self):
         self.memory.load()
         self.feelings.load()
+        self.custom_status.load()
+        self.policy.load()
         self.ages.load()
         self.owner.load()
         self.away.load(self.owner.data.get("quiet_until", 0))

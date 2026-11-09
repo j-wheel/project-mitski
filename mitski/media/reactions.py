@@ -109,8 +109,13 @@ class Reactions(Component):
             emoji = await self.pick(msg, quick)
             if emoji is None:
                 return None
+            minor = self.app.ages.is_minor(msg.author)
+            if self.app.policy.breaks(str(getattr(emoji, "name", emoji)), msg.channel, minor):
+                return None
             if delay:
                 await asyncio.sleep(delay)
+            if self.messages.muted(msg.channel):
+                return None
             try:
                 await msg.add_reaction(emoji)
             except discord.HTTPException as e:

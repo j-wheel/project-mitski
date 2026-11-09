@@ -12,6 +12,7 @@ async def test_explicit_lines_are_held_back_outside_age_restricted_channels(worl
 
 
 async def test_age_restricted_channels_allow_it(world):
+    world.app.policy.set_mode(world.guild.id, "normal")
     world.channel.nsfw = True
     world.replies.append("hehe send nudes")
     await world.send(world.people["anna"], "mitski hiii")

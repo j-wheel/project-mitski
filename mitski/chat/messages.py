@@ -81,7 +81,11 @@ class MessageView(Component):
         return getattr(g, "id", None)
 
     def allowed_channel(self, channel):
-        return channel.id in self.cfg.channels or getattr(channel, "parent_id", None) in self.cfg.channels
+        listed = channel.id in self.cfg.channels or getattr(channel, "parent_id", None) in self.cfg.channels
+        return listed and not self.muted(channel)
+
+    def muted(self, channel):
+        return channel.id in self.cfg.muted or getattr(channel, "parent_id", None) in self.cfg.muted
 
     def call(self, user):
         return self.memory.call_name(user) or short_name(user)

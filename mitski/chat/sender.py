@@ -16,6 +16,8 @@ log = logs.get("sender")
 GONE_OR_INVALID = (10008, 50035, 160002)
 TYPING_MAX = 8
 LONG_TYPING_MAX = 20
+SHOWN_TYPING_MIN = 1.2
+SHOWN_TYPING_SHARE = 0.35
 
 
 class Sender(Component):
@@ -99,6 +101,8 @@ class Sender(Component):
         text_lines = [i for i, ln in enumerate(lines) if not STICKER_TAG.fullmatch(ln)]
         last_text = text_lines[-1] if text_lines else -1
         for i, line in enumerate(lines):
+            if self.messages.muted(channel):
+                return out.sent
             tag = STICKER_TAG.fullmatch(line)
             if tag:
                 await self._sticker(out, tag.group(1))
@@ -111,7 +115,7 @@ class Sender(Component):
                 continue
             line, typo = self._maybe_typo(line)
             await self._type(out, line, already_typed, LONG_TYPING_MAX if longer else TYPING_MAX)
-            if not out.decided and not out.apply(plan()):
+            if self.messages.muted(channel) or (not out.decided and not out.apply(plan())):
                 return out.sent
             line = out.with_ping(line, is_last=i == last_text)
             await self._post(out, line)
@@ -163,23 +167,30 @@ class Sender(Component):
 
     def _away(self, channel):
         guild = getattr(channel, "guild", None)
-        return guild is not None and (self.app.away.asleep(guild.id) or self.app.away.is_quiet(guild.id))
+        return guild is not None and (
+            self.app.away.asleep(guild.id) or self.app.away.is_quiet(guild.id) or self.messages.muted(channel)
+        )
 
     async def _sticker(self, out, name):
         sticker = self.app.emojis.find_sticker(out.guild, name)
-        if sticker is None:
+        if sticker is None or not self.app.policy.fits(out.guild, sticker.name):
             return
         await asyncio.sleep(random.uniform(0.6, 1.8))
+        if self.messages.muted(out.channel):
+            return
         try:
             out.sent.append(await out.channel.send(stickers=[sticker], allowed_mentions=NO_PINGS))
         except discord.HTTPException as e:
             log.warning("sticker failed: %s", e)
 
     async def _type(self, out, line, already_typed, longest=None):
+        """ "Is typing" only shows while she's actually typing a message out, never while her model is still working
+        on it (that can take a while when she's busy). The time the draft took still counts as writing time, so the
+        first message isn't held back, but it always shows her typing for a moment before it lands."""
         longest = TYPING_MAX if longest is None else longest
         seconds = min(len(line) / (self.cfg.TYPING_CPS * random.uniform(0.8, 1.2)), longest) + random.uniform(0.2, 0.8)
         if not out.sent:
-            seconds = max(0.0, seconds - already_typed)
+            seconds = max(min(seconds, max(SHOWN_TYPING_MIN, seconds * SHOWN_TYPING_SHARE)), seconds - already_typed)
         else:
             await asyncio.sleep(random.uniform(0.4, 1.5))
         if seconds > 0:

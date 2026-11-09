@@ -4,8 +4,10 @@ from mitski.chat.patterns import (
     ANY_URL,
     CHANNEL_MENTION,
     EVERYONE_MENTION,
+    LIST_LINE,
     ROBOTIC,
     ROLE_MENTION,
+    SERVILE,
     STICKER_TAG,
     USER_MENTION,
 )
@@ -89,11 +91,15 @@ class DraftFilter(Component):
         blob = " " + " ".join(_norm(t) for t in theirs) + " "
         return [ln for ln in lines if len(_norm(ln)) >= 8 and (_norm(ln) in whole or f" {_norm(ln)} " in blob)]
 
-    def problem(self, lines, msgs, honest=False, adult=True, direct=False):
+    def problem(self, lines, msgs, honest=False, adult=True, direct=False, channel=None, minors=False):
         if any(ROBOTIC.search(ln) for ln in lines):
             return "robotic"
+        if any(SERVILE.search(ln) for ln in lines) or sum(1 for ln in lines if LIST_LINE.match(ln)) >= 2:
+            return "servile"
         if not adult and any(explicit(ln) for ln in lines):
             return "explicit"
+        if channel is not None and any(self.app.policy.breaks(ln, channel, minors) for ln in lines):
+            return "not safe"
         if direct and any(voice.opens_with_she(ln) for ln in lines):
             return "third person"
         copied = self.echoed(lines, msgs)

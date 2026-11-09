@@ -2,7 +2,6 @@ import asyncio
 import random
 import re
 import time
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 import discord
@@ -12,9 +11,10 @@ from mitski.brain.planner import Thought
 from mitski.chat import convo, shape
 from mitski.chat.addressing import QUESTIONY
 from mitski.chat.messages import clean
-from mitski.chat.patterns import LOW_EFFORT, NEVER, PING_TAG, ROBOTIC
+from mitski.chat.patterns import LIST_LINE, LOW_EFFORT, NEVER, PING_TAG, ROBOTIC, SERVILE
 from mitski.chat.policy import explicit
 from mitski.core import logs, voice
+from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.metrics import Metrics
 from mitski.core.text import cut
@@ -44,6 +44,37 @@ LONG_ASK = re.compile(
 LONG_MESSAGE = 250
 
 
+BRUSH_OFF_NOTE = (
+    "They want something that takes real work (a whole recipe, a guide, an essay, code, a long list). You're a "
+    "person in a chat, not a helper, so you don't do that on demand: brush it off your way, like \"just google it "
+    'lol", "idk i just buy it", "my mom makes it, ill ask her", "thats a whole essay bro", or tease them about it. '
+    "Keep it light, a line or two."
+)
+GIST_NOTE = (
+    "They want something that takes real work. You're a person in a chat, not a helper, so you don't write it all "
+    "out: just the gist you'd know offhand, in a line or two the way you'd text it{gist}. No lists, no steps, "
+    "nothing you'd have to look up."
+)
+FAVOR_NOTE = (
+    'You\'re doing what they asked, like a friend would. Say so short and casual, your way ("bet", "ok ill bug him '
+    'in 2h", "say less", "on it"), not like an assistant confirming a task, and don\'t repeat their request back.'
+)
+
+
+MISSED_NOTE = (
+    "You were offline and only just saw this, {ago} after they sent it. Answer it like a text you just saw: if it "
+    'fits, a quick "sorry just saw this" or "omg i was offline", but no big apology and no excuses.'
+)
+
+
+def time_words(seconds):
+    minutes = max(1, round(seconds / 60))
+    if minutes < 90:
+        return f"about {minutes} minutes"
+    hours = round(minutes / 60)
+    return f"about {hours} hours" if hours < 36 else f"about {round(hours / 24)} days"
+
+
 def too_few_answers(lines, questions):
     """One line for several questions, or two or more questions with no line at all. Texting merges answers, so
     two lines for three questions is fine."""
@@ -53,7 +84,11 @@ def too_few_answers(lines, questions):
 FIXES = {
     "echo": "Don't repeat or copy anything anyone said, reply to it in your own words.",
     "robotic": "Talk like yourself, a person, not like an assistant.",
+    "servile": "That sounded like an assistant doing a task. Say it like a friend in a chat: short, casual, your own "
+    "way, no lists or steps, and don't repeat their request back.",
     "explicit": "Keep it PG-13 here: nothing sexual, you can't know how old people are.",
+    "not safe": "That can't be said here. Say it again clean and kind: no swearing, nothing sexual, no flirting, no "
+    "threats even as a joke, no insults or teasing.",
     "third person": "You're talking about yourself, so say i, me and my. Never your own name or she/her.",
 }
 
@@ -94,7 +129,9 @@ class Reply:
     sent: list = field(default_factory=list)
     outcome: str = "dropped"
     adult: bool = False
+    minors: bool = False
     long: bool = False
+    missed: float = 0.0
 
     @property
     def guild(self):
@@ -121,6 +158,7 @@ class ReplyPipeline(Component):
     def __init__(self, app):
         super().__init__(app)
         self.long_at = {}
+        self.missed = BoundedDict(200)
 
     def queue(self, channel, mode, msg):
         key = (channel.id, msg.author.id)
@@ -227,9 +265,6 @@ class ReplyPipeline(Component):
     def _seen(self, reply):
         return reply.ctx.everything + self.state.last_history.get(reply.channel.id, [])[:20]
 
-    def _typing(self, reply):
-        return self.app.voice.typing_in(reply.channel)
-
     async def _admit(self, reply):
         if reply.key is not None:
             reply.trigger = self.state.waiting.get(reply.key)
@@ -240,7 +275,8 @@ class ReplyPipeline(Component):
             return reply.stop("not her channel")
         reply.boss = self.app.owner.is_owner(trigger.author)
         age = (discord.utils.utcnow() - trigger.created_at).total_seconds()
-        if self._too_old(reply, age):
+        reply.missed = self.missed.pop(trigger.id, 0.0)
+        if not reply.missed and self._too_old(reply, age):
             return reply.stop("stale")
         reply.here = self.messages.guild_id(reply.channel)
         reply.was_quiet = reply.here is not None and self.app.away.is_quiet(reply.here)
@@ -388,19 +424,18 @@ class ReplyPipeline(Component):
             to = "someone_else" if self.app.addressing.for_someone_else(target) else "her"
         else:
             to = None
-        async with self._typing(reply) if not reply.was_quiet else nullcontext():
-            return await self.app.brain.think(
-                reply.mode,
-                target,
-                msgs,
-                True,
-                reply.channel,
-                to_her=to,
-                owner=self.app.owner.is_owner(target.author) and reply.mode != "ambient",
-                orders=self.app.owner.orders_listing(),
-                said=reply.said,
-                parts=[p.text for p in reply.pieces] if len(reply.pieces) > 1 else None,
-            )
+        return await self.app.brain.think(
+            reply.mode,
+            target,
+            msgs,
+            True,
+            reply.channel,
+            to_her=to,
+            owner=self.app.owner.is_owner(target.author) and reply.mode != "ambient",
+            orders=self.app.owner.orders_listing(),
+            said=reply.said,
+            parts=[p.text for p in reply.pieces] if len(reply.pieces) > 1 else None,
+        )
 
     async def _plan(self, reply):
         target, channel = reply.target, reply.channel
@@ -424,7 +459,9 @@ class ReplyPipeline(Component):
             + await self.app.requests.apply(reply.thought, target, channel)
             + await self.app.scheduler.apply(reply.thought, target, channel)
         )
-        if reply.waited >= SEEN_LATE_SEC:
+        if reply.missed:
+            reply.extras.append(MISSED_NOTE.format(ago=time_words(reply.missed + reply.waited)))
+        elif reply.waited >= SEEN_LATE_SEC:
             reply.extras.append(self.app.routine.seen_late(reply.waited, reply.was_doing))
         chiming = self._chiming(reply)
         if chiming:
@@ -435,12 +472,44 @@ class ReplyPipeline(Component):
                 f"repeat it."
             )
             log.info("[%s] chiming in on %s's message to someone else", reply.mode, target.author)
+        self._human_ask(reply)
         self._split_topics(reply, chiming)
         reply.long = self._long(reply, chiming)
         if reply.long:
             reply.extras.append(LONG_NOTE)
         reply.extras_for = target.id
         return True
+
+    def _human_ask(self, reply):
+        """She's a person in a chat, not a helper: a big ask (a whole recipe, a guide, homework) gets brushed off or
+        a quick gist, never the full thing, and a favour gets a casual "bet", not a task confirmation."""
+        thought = reply.thought
+        if thought.ask == "effort":
+            gist = cut(thought.brief, 120).rstrip(".") if thought.brief else ""
+            reply.extras = [e for e in reply.extras if not PLAN_SUMMARY.match(str(e or ""))]
+            reply.thought = thought.without_plan()
+            if random.random() < self._brush_off_chance(reply):
+                reply.extras.append(BRUSH_OFF_NOTE)
+                Metrics.event("brushed off")
+                log.info("[%s] that's a big ask, she brushes it off", reply.mode)
+            else:
+                reply.extras.append(GIST_NOTE.format(gist=f" (like: {gist})" if gist else ""))
+                log.info("[%s] that's a big ask, she just gives the gist", reply.mode)
+        elif thought.ask == "favor" or thought.actions:
+            reply.extras.append(FAVOR_NOTE)
+
+    def _brush_off_chance(self, reply):
+        chance = float(self.cfg.BRUSH_OFF_CHANCE)
+        user = reply.target.author
+        if self.app.owner.is_owner(user):
+            chance *= 0.4
+        elif self.app.feelings.like_of(user) >= 35:
+            chance *= 0.6
+        if not self.app.routine.can_hang_out_in(getattr(reply.guild, "id", None)):
+            chance *= 1.4
+        if self.app.feelings.mood_on and self.app.feelings.mood.level("tired") >= 0.35:
+            chance *= 1.3
+        return min(chance, 0.95)
 
     def _long(self, reply, chiming):
         """Whether this reply may be longer than usual. Her planner says when the moment calls for it, and this
@@ -488,22 +557,32 @@ class ReplyPipeline(Component):
         situation = self.app.situation
         await self.app.ages.settled(target.author)
         authors = list({m.author.id: m.author for m in ctx.everything if m.author.id != self.me.id}.values())
-        reply.adult = self.app.policy.adult_ok(reply.channel, minors=situation.minors_among(authors))
+        reply.minors = situation.minors_among(authors)
+        reply.adult = self.app.policy.adult_ok(reply.channel, minors=reply.minors)
         reply.persona = situation.persona(
             target.author, reply.guild, full=mode != "ambient", channel=reply.channel, people=authors
         )
         reply.notes = situation.notes(mode, reply.channel, target, ctx.msgs, reply.extras, ctx.around, reply.burst)
         if self.cfg.SHOW_NOTES:
             log.info("for %s:\n%s", target.author, reply.notes)
-        async with self._typing(reply):
-            reply.text = await self.llm.generate(self.llm.prompt(ctx.turns, reply.persona, reply.notes))
+        reply.text = await self.llm.generate(self.llm.prompt(ctx.turns, reply.persona, reply.notes))
 
     async def _polish(self, reply):
         ctx, drafts, channel_id = reply.ctx, self.app.drafts, reply.channel.id
         reply.lines = drafts.tidy(reply.text, channel_id, ctx.others)
         seen = self._seen(reply)
         problem = (
-            drafts.problem(reply.lines, seen, False, reply.adult, self._asked_directly(reply)) if reply.lines else None
+            drafts.problem(
+                reply.lines,
+                seen,
+                False,
+                reply.adult,
+                self._asked_directly(reply),
+                channel=reply.channel,
+                minors=reply.minors,
+            )
+            if reply.lines
+            else None
         )
         if problem:
             log.info("[%s] reply looked %r, trying again: %s", reply.mode, problem, " | ".join(reply.lines))
@@ -517,28 +596,35 @@ class ReplyPipeline(Component):
         if reply.lines and reply.things and too_few_answers(len(reply.lines), len(reply.things)):
             log.info("[%s] %d lines for %d questions, trying again", reply.mode, len(reply.lines), len(reply.things))
             Metrics.event("answer all retry")
-            async with self._typing(reply):
-                reply.lines = await self.app.review.answer_all(
-                    ctx.turns, reply.persona, reply.notes, reply.things, reply.channel, ctx.others, seen, reply.lines
-                )
+            reply.lines = await self.app.review.answer_all(
+                ctx.turns, reply.persona, reply.notes, reply.things, reply.channel, ctx.others, seen, reply.lines
+            )
         thought = reply.thought
         if reply.lines and thought.wants_answer and not answers_it(reply.lines, thought.brief, thought.checked):
             log.info("[%s] reply didn't answer, trying again: %s", reply.mode, " | ".join(reply.lines))
             Metrics.event("answer retry")
-            async with self._typing(reply):
-                reply.lines = await self.app.review.make_her_answer(
-                    ctx.turns,
-                    reply.persona,
-                    reply.notes,
-                    thought,
-                    reply.target,
-                    ctx.msgs,
-                    reply.channel,
-                    ctx.others,
-                    seen,
-                    reply.lines,
-                    reply.mode,
-                )
+            reply.lines = await self.app.review.make_her_answer(
+                ctx.turns,
+                reply.persona,
+                reply.notes,
+                thought,
+                reply.target,
+                ctx.msgs,
+                reply.channel,
+                ctx.others,
+                seen,
+                reply.lines,
+                reply.mode,
+            )
+        if reply.lines and await self.app.policy.judged_unsafe(reply.lines, reply.channel):
+            log.info("[%s] the safety check turned it down, trying again: %s", reply.mode, " | ".join(reply.lines))
+            Metrics.event("redo not safe")
+            reply.lines = await self._retry(reply, FIXES["not safe"], seen)
+            if not reply.lines or await self.app.policy.judged_unsafe(reply.lines, reply.channel):
+                log.info("[%s] still not safe, staying quiet", reply.mode)
+                if reply.mode != "ambient" and self.cfg.REACTIONS:
+                    await self.app.reactions.react(reply.trigger)
+                return reply.stop("not safe")
         return bool(reply.lines) or reply.stop("empty draft")
 
     def _asked_directly(self, reply):
@@ -547,20 +633,24 @@ class ReplyPipeline(Component):
     async def _retry(self, reply, fix, seen):
         drafts = self.app.drafts
         direct = self._asked_directly(reply)
-        async with self._typing(reply):
-            text = await self.llm.generate(
-                self.llm.prompt(reply.ctx.turns, reply.persona, reply.notes + "\n" + fix),
-                temperature=min(1.3, self.cfg.TEMPERATURE + 0.2),
-            )
+        text = await self.llm.generate(
+            self.llm.prompt(reply.ctx.turns, reply.persona, reply.notes + "\n" + fix),
+            temperature=min(1.3, self.cfg.TEMPERATURE + 0.2),
+        )
         lines = drafts.tidy(text, reply.channel.id, reply.ctx.others)
-        if lines and drafts.problem(lines, seen, False, reply.adult, direct):
+        if lines and drafts.problem(
+            lines, seen, False, reply.adult, direct, channel=reply.channel, minors=reply.minors
+        ):
             copied = set(drafts.echoed(lines, seen))
             kept = [
                 ln
                 for ln in lines
                 if ln not in copied
                 and not ROBOTIC.search(ln)
+                and not SERVILE.search(ln)
+                and not LIST_LINE.match(ln)
                 and (reply.adult or not explicit(ln))
+                and not self.app.policy.breaks(ln, reply.channel, reply.minors)
                 and not (direct and voice.opens_with_she(ln))
             ]
             lines = kept if sum(map(len, kept)) >= 0.5 * sum(map(len, lines)) else []
@@ -577,8 +667,7 @@ class ReplyPipeline(Component):
         if reply.mode == "dm":
             return True
         reply.people = self.messages.people_in(reply.ctx.everything)
-        async with self._typing(reply):
-            verdict, other, mixed = await self._review(reply)
+        verdict, other, mixed = await self._review(reply)
         if mixed:
             log.info("it gets who said what wrong, not sending it: %s", " | ".join(reply.lines))
             if self._owed(reply) and self.cfg.REACTIONS:

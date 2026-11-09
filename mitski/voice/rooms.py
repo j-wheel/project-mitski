@@ -40,13 +40,14 @@ def room_score(channel):
 
 
 class RoomPicker:
-    def __init__(self, people):
+    def __init__(self, people, muted=lambda channel: False):
         self.people = people
+        self.muted = muted
 
     def pick(self, msg, me_id, empty_ok=False):
         guild = msg.guild
         text = (msg.content or "").lower()
-        rooms = [c for c in guild.voice_channels if joinable(c)]
+        rooms = [c for c in guild.voice_channels if joinable(c) and not self.muted(c)]
         for found in (
             self._mentioned(msg, rooms),
             self._named(rooms, text),

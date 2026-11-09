@@ -22,7 +22,7 @@ class DraftReview(Component):
             lora_scale=self.cfg.LORA_SCALE * self.cfg.ANSWER_RETRY_LORA,
         )
         lines = self.app.drafts.tidy(text, channel.id, others)
-        return lines if len(lines) > len(first) and not self.app.drafts.problem(lines, seen) else first
+        return lines if len(lines) > len(first) and not self.app.drafts.problem(lines, seen, channel=channel) else first
 
     async def match_answers(self, lines, things):
         """Which message each line answers, None for a line that answers none of them (like "hey anna!").
@@ -143,7 +143,11 @@ class DraftReview(Component):
             self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must), temperature=min(self.cfg.TEMPERATURE, 0.7)
         )
         lines = self.app.drafts.tidy(text, channel.id, others)
-        if not lines or self.app.drafts.problem(lines, seen):
+        if (
+            not lines
+            or self.app.drafts.problem(lines, seen, channel=channel)
+            or await self.app.policy.judged_unsafe(lines, channel)
+        ):
             return None
         if thought.wants_answer and not answers_it(lines, thought.brief, thought.checked):
             return None
@@ -159,7 +163,11 @@ class DraftReview(Component):
             lora_scale=self.cfg.LORA_SCALE * self.cfg.ANSWER_RETRY_LORA,
         )
         retry = self.app.drafts.tidy(text, channel.id, others)
-        if retry and answers_it(retry, thought.brief, thought.checked) and not self.app.drafts.problem(retry, seen):
+        if (
+            retry
+            and answers_it(retry, thought.brief, thought.checked)
+            and not self.app.drafts.problem(retry, seen, channel=channel)
+        ):
             log.info(
                 "[%s] answered on the second try (lora at %g)", mode, self.cfg.LORA_SCALE * self.cfg.ANSWER_RETRY_LORA
             )
@@ -173,8 +181,9 @@ class DraftReview(Component):
         )
         out = await self.llm.generate(
             self.llm.fmt.instruct(
-                f"You write {her}'s next message in a discord chat, exactly in her style: {self.cfg.PERSONA} It's a casual "
-                f"chat message, so it never sounds like an assistant.",
+                f"You write {her}'s next message in a discord chat, exactly in her style: "
+                f"{self.app.policy.tamed(channel, self.cfg.PERSONA)} It's a casual chat message, so it never sounds "
+                f"like an assistant. {self.app.policy.reminder(channel)}",
                 f"Recent chat:\n{recent}\n\n"
                 + (
                     "How she types (her own recent messages):\n" + "\n".join(f"- {e}" for e in examples) + "\n\n"
@@ -193,7 +202,7 @@ class DraftReview(Component):
         if (
             written
             and answers_it(written, thought.brief, thought.checked)
-            and not self.app.drafts.problem(written, seen)
+            and not self.app.drafts.problem(written, seen, channel=channel)
         ):
             log.info("[%s] answered on the third try (written by the plain model in her style)", mode)
             return written

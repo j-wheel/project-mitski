@@ -18,6 +18,31 @@ GROUPS = (
             Command("addchannel", ("ac", "addchannels"), "<id ...>", "add channels she talks in"),
             Command("delchannel", ("dc", "delchannels", "removechannel"), "<id ...>", "remove channels she talks in"),
             Command("listchannels", ("lc", "listchannel", "channels"), "", "list her channels"),
+            Command("mute", ("mu",), "", "she stops doing anything in this channel (amods can use this too)"),
+            Command("unmute", ("um",), "", "she picks this channel back up (amods can use this too)"),
+        ),
+    ),
+    (
+        "amods",
+        (
+            Command(
+                "addp", ("ap", "addamod"), "<user or role id ...>", "let them use mute and unmute, and nothing else"
+            ),
+            Command("delp", ("dp", "delamod", "removep"), "<user or role id ...>", "take that away again"),
+            Command("listp", ("lp", "listamod", "amods"), "", "list the users and roles that can mute her"),
+        ),
+    ),
+    (
+        "safety modes",
+        (
+            Command(
+                "modeset",
+                ("ms",),
+                "<safe|normal|unrestricted> <server id ...>",
+                "how far she can go in a server. every server is safe until you change it",
+            ),
+            Command("mode", ("mo",), "[server id]", "the mode a server is in (this one without an id)"),
+            Command("modes", ("ml",), "", "what each mode means, and every server's mode"),
         ),
     ),
     (
@@ -38,6 +63,12 @@ GROUPS = (
             Command("note", ("n",), "<who> [cat] <fact>", "add a fact by hand"),
             Command("set", ("sf",), "<who> <field> <value>", "set a profile field"),
             Command("forgetme", ("fm",), "", "she deletes what she knows about you and stops remembering new things"),
+            Command(
+                "printchat",
+                ("pc",),
+                "[--png|--pdf] <user|dm channel id>",
+                "a printout of her whole dm with someone, styled like discord: a pdf, or one long png with --png",
+            ),
             Command("rememberme", ("rm",), "", "undo forgetme"),
         ),
     ),
@@ -113,6 +144,7 @@ class Invocation:
     name: str
     rest: str
     ids: list
+    channel: object = None
 
 
 def parse(text, prefix):

@@ -26,6 +26,7 @@ class MessageRouter(Component):
             self.app.owner.seen(short_name(msg.author))
         if is_dm:
             self.state.dm_unanswered.discard(msg.author.id)
+            self.app.voice.heard_in_dm(msg)
             self._reply(msg, "dm")
             return
         self.app.emojis.index_message(msg)
@@ -37,6 +38,12 @@ class MessageRouter(Component):
         if author.bot or msg.type not in NORMAL_TYPES or author.id in self.cfg.ignored:
             return False
         return self.me is not None and author.id != self.me.id
+
+    def catch_up(self, msg, age):
+        """A dm that came in while she was offline: answered like a new one, but it's allowed to be old, and she
+        knows she's only just seeing it."""
+        self.app.pipeline.missed[msg.id] = age
+        self._reply(msg, "dm")
 
     def _reply(self, msg, mode):
         self.memory.touch(msg.author, msg.content)

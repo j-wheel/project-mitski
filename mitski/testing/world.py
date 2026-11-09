@@ -7,6 +7,7 @@ from mitski.core.metrics import Metrics
 from mitski.testing.fakes import FakeChannel, FakeClient, FakeGuild, FakeMessage, FakeUser, settle
 
 QUIET_WORLD = {
+    "SAFETY_REVIEW": False,
     "READ_DELAY": [0, 0],
     "READ_CPS": 10_000,
     "TYPING_CPS": 10_000,

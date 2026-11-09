@@ -1,4 +1,5 @@
 import asyncio
+import random
 import re
 from dataclasses import dataclass, field, replace
 
@@ -43,6 +44,7 @@ class Thought:
     checked: bool = False
     topics: list | None = None
     length: str = "short"
+    ask: str = "none"
 
     def __post_init__(self):
         self.notes = [n for n in self.notes if n]
@@ -207,6 +209,7 @@ class Brain(Component):
         )
         reply_type = plan.get("reply_type") if plan.get("reply_type") in prompts.REPLY_TYPES else "other"
         length = plan.get("length") if plan.get("length") in prompts.LENGTHS else "short"
+        ask = plan.get("ask") if plan.get("ask") in prompts.ASKS else "none"
         wants = voice.to_you(cut(str(plan.get("wants") or "").strip(), 160), self.messages.own_names())
         answer = cut(str(plan.get("answer") or "").strip(), prompts.BRIEF_MAX)
         if not q.explicit and to_her == "someone_else":
@@ -218,6 +221,10 @@ class Brain(Component):
             if len(query) >= 3:
                 steps.append({"tool": "search", "input": query})
                 answer = ""
+        skipped = self._skips_lookup(q, ask, steps)
+        if skipped:
+            steps = [s for s in steps if s["tool"] != "search"]
+            log.info("%s: she could google it but doesn't bother this time", q.name)
         results = await asyncio.gather(
             *(self.run(s["tool"], str(s["input"]).strip(), q.target, q.msgs, q.name, q.channel) for s in steps),
             return_exceptions=True,
@@ -230,12 +237,15 @@ class Brain(Component):
             brief = clean_brief((out or {}).get("say")) or brief
         brief = self._in_her_voice(q, brief) if reply_type in prompts.PLANNED else ""
         notes = self._notes(q, to_her, reply_type, wants, brief, checked, failed)
+        if skipped and not brief and not checked:
+            notes.append(prompts.SKIPPED_LOOKUP_NOTE)
         actions = self._actions(q, plan)
+        label = [reply_type] + (["longer"] if length == "longer" else []) + ([f"{ask} ask"] if ask != "none" else [])
         await self._report(
             q,
             plan,
             to_her,
-            f"{reply_type}, longer" if length == "longer" else reply_type,
+            ", ".join(label + (["didn't google"] if skipped else [])),
             wants,
             brief,
             steps,
@@ -252,7 +262,15 @@ class Brain(Component):
             checked=bool(checked),
             topics=self._topics(q, plan),
             length=length,
+            ask=ask,
         )
+
+    def _skips_lookup(self, q, ask, steps):
+        """Sometimes she just doesn't bother to google something, like anyone. Never when they asked her to look it
+        up, never for her owner, and never for a favour or a big ask (those are handled on their own)."""
+        if not any(s["tool"] == "search" for s in steps) or q.owner or ASKED_TO_SEARCH.search(q.newest):
+            return False
+        return ask in ("none", "quick", "expert") and random.random() < float(self.cfg.SKIP_LOOKUP_CHANCE)
 
     @staticmethod
     def _steps(plan, tools):
@@ -285,7 +303,10 @@ class Brain(Component):
         if to_her == "everyone" and not q.explicit:
             notes.append(f"{q.name} said that to the whole chat, not just you.")
         if q.owner:
-            notes.append(f"If {q.name} is asking you to do something, just do it.")
+            notes.append(
+                f"If {q.name} is asking you to do something, you just do it, like you would for a close friend: no "
+                f"fuss, and no formal confirmation."
+            )
         return notes
 
     @staticmethod
