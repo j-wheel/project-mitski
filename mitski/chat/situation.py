@@ -19,6 +19,9 @@ class Situation(Component):
             policy.tamed(channel, self.cfg.PERSONA),
             self.cfg.identity_note.replace("{name}", short_name(self.me) if self.me else "mitski"),
         ]
+        facts = self.app.identity.line()
+        if facts:
+            parts.append(facts)
         boss = (
             self.app.owner.persona_line(self.app.owner.is_owner(user), self.owner_call())
             if self.app.owner.active
@@ -27,6 +30,7 @@ class Situation(Component):
         for blurb in (
             boss,
             policy.tamed(channel, self.memory.blurb(user, full=full)),
+            policy.tamed(channel, self.app.servers.blurb(guild)) if guild is not None else "",
             self.memory.self_blurb(),
             self.app.profiles.own_status(),
             self.app.emojis.hint(guild),
@@ -141,7 +145,11 @@ class Situation(Component):
         hooks = self.memory.hooks(user, context) if user is not None else []
         if hooks:
             lines.append("On your mind about them right now: " + "; ".join(hooks) + ".")
-        for blurb in (self.memory.others_blurb(people, context), self.app.profiles.blurb(user, guild)):
+        for blurb in (
+            self.memory.others_blurb(people, context),
+            self.app.profiles.blurb(user, guild),
+            self.app.knowledge.note(context),
+        ):
             if blurb:
                 lines.append(blurb)
         if guild is not None and mode != "ambient" and self.app.away.just_woke(guild.id):

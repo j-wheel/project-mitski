@@ -71,6 +71,7 @@ class AgeGuard(Component):
         self.profile_seen = BoundedDict(5000)
         self.fetch_times = deque()
         self.fetch_lock = asyncio.Lock()
+        self.next_fetch = 0.0
         self.pending = {}
 
     def load(self):
@@ -117,7 +118,8 @@ class AgeGuard(Component):
         self._apply(user, "name", name_signal)
 
     def want_profile(self, user):
-        if not (self.cfg.AGE_CHECK and self.cfg.AGE_CHECK_BIOS) or getattr(user, "bot", False):
+        wanted = (self.cfg.AGE_CHECK and self.cfg.AGE_CHECK_BIOS) or self.cfg.PROFILE_READ
+        if not wanted or getattr(user, "bot", False):
             return False
         if not callable(getattr(user, "profile", None)):
             return False
@@ -145,6 +147,9 @@ class AgeGuard(Component):
             if window_count(self.fetch_times, HOUR, time.monotonic()) >= self.cfg.AGE_CHECK_BIOS_PER_HOUR:
                 return
             self.profile_seen[user.id] = time.time()
+            wait = self.next_fetch - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
             self.fetch_times.append(time.monotonic())
             try:
                 profile = await user.profile()
@@ -152,9 +157,12 @@ class AgeGuard(Component):
                 log.debug("couldn't read %s's profile: %r", user, e)
                 return
             finally:
-                await asyncio.sleep(random.uniform(2, 5))
-        bios = [getattr(profile, a, None) for a in ("bio", "guild_bio")]
-        self._apply(user, "bio", strongest([read_signal(b, "their bio") for b in bios if b]))
+                self.next_fetch = time.monotonic() + random.uniform(2, 5)
+        if self.cfg.AGE_CHECK and self.cfg.AGE_CHECK_BIOS:
+            bios = [getattr(profile, a, None) for a in ("bio", "guild_bio")]
+            self._apply(user, "bio", strongest([read_signal(b, "their bio") for b in bios if b]))
+        if self.cfg.PROFILE_READ:
+            self.memory.saw_profile(user, profile)
 
     def _apply(self, user, source, signal):
         key = str(user.id)

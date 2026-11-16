@@ -7,9 +7,9 @@ def planner(world, **plan):
     asked = []
 
     async def ask_json(system, user, schema, max_tokens=400, think=False):
-        asked.append(user)
         if "reply_type" not in schema.get("properties", {}):
             return None
+        asked.append(user)
         return {"to_her": "her", "wants": "", "reply_type": "small_talk", "answer": "", "tools": [], **plan}
 
     world.app.cfg.THINKING = True

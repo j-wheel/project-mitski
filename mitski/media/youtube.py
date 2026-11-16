@@ -75,7 +75,7 @@ class YouTube(Component):
                     "You summarize youtube videos for someone who hasn't watched them.",
                     f'Transcript of the youtube video "{info["title"]}" by {info["author"]}:\n\n{transcript}\n\n'
                     f"In 2 or 3 short sentences: what is the video about and what happens in it? Plain text only.",
-                    160,
+                    320,
                 )
                 if summary:
                     info["summary"] = cut(summary, 600)

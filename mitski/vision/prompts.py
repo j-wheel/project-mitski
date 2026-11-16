@@ -31,8 +31,19 @@ def plain(text):
     return scrub(strip_thinking(text or ""))
 
 
+CAPTION_MAX = 700
+DETAIL_MAX = 1800
+
+
 def shorten(text, limit):
-    return text if len(text) <= limit else text[: limit - 1].rsplit(" ", 1)[0] + "…"
+    """Under limit characters, ending on a whole sentence where there is one, so nothing reads cut off."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    ends = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", head)]
+    if ends and ends[-1] >= limit // 3:
+        return head[: ends[-1]].strip()
+    return head[: limit - 1].rsplit(" ", 1)[0] + "…"
 
 
 def _drop_chatty(sentence):
@@ -48,13 +59,14 @@ def tidy_caption(text):
     text = " ".join(kept) if kept else text
     text = re.sub(r"!+", ".", text)
     text = re.sub(r"\s+", " ", text).strip().strip("\"'")
+    text = shorten(text, CAPTION_MAX)
     if text.endswith(".") and not text.endswith(".."):
         text = text[:-1]
-    return shorten(text, 300)
+    return text
 
 
 def tidy_detail(text):
-    return shorten(re.sub(r"\s+", " ", plain(text)).strip().translate(QUOTES), 900)
+    return shorten(re.sub(r"\s+", " ", plain(text)).strip().translate(QUOTES), DETAIL_MAX)
 
 
 def caption_prompt(item, n_frames, said, sticker_desc=""):

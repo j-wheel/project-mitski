@@ -9,6 +9,31 @@ THREADED = "threaded"
 TINY = 60
 LONG_ANSWER = 200
 LONG_ANSWERS = 300
+QUICK_MAX = 4
+PARAGRAPH = 80
+
+
+def bubbles(lines, limit=QUICK_MAX):
+    """At most `limit` separate messages: past that, the two shortest neighbours become one message with a line
+    break, the way people send a burst of three or four, not eight one-liners in a row."""
+    out = list(lines)
+    while len(out) > max(1, limit):
+        pairs = [
+            (len(out[i]) + len(out[i + 1]), i)
+            for i in range(len(out) - 1)
+            if not STICKER_TAG.fullmatch(out[i]) and not STICKER_TAG.fullmatch(out[i + 1])
+        ]
+        if not pairs:
+            break
+        _, i = min(pairs)
+        out[i : i + 2] = [f"{out[i]}\n{out[i + 1]}"]
+    return out
+
+
+def paragraphs(answers, longer):
+    """Blank lines between answers only read right in a longer, proper message: in a quick chat reply nobody
+    leaves a gap between two short lines."""
+    return longer and len(answers) >= 2 and all(sum(map(len, a)) >= PARAGRAPH for a in answers)
 
 
 def group_answers(lines, owners):

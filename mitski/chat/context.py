@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -5,6 +6,8 @@ import discord
 
 from mitski.chat.messages import short_name
 from mitski.core.component import Component
+
+HISTORY_FRESH_SEC = 8.0
 
 
 @dataclass
@@ -21,6 +24,33 @@ class Context:
 
 
 class ContextBuilder(Component):
+    def __init__(self, app):
+        super().__init__(app)
+        self.fetched = {}
+
+    async def recent_history(self, channel, limit):
+        """The channel's newest messages, newest first. A fetch from a few seconds ago is used again as long as
+        nothing new came in since (discord tells us the newest message id), so reading the chat twice for one reply
+        costs one request."""
+        now = time.monotonic()
+        newest = getattr(channel, "last_message_id", None)
+        hit = self.fetched.get(channel.id)
+        if (
+            hit is not None
+            and newest is not None
+            and now - hit[0] < HISTORY_FRESH_SEC
+            and hit[2] >= limit
+            and hit[1]
+            and hit[1][0].id >= newest
+        ):
+            return hit[1][:limit]
+        msgs = [m async for m in channel.history(limit=limit)]
+        if newest is not None:
+            self.fetched[channel.id] = (now, msgs, limit)
+            if len(self.fetched) > 200:
+                self.fetched.pop(next(iter(self.fetched)))
+        return msgs
+
     async def chat_with(self, user, channel):
         if isinstance(channel, discord.DMChannel):
             msgs = [m async for m in channel.history(limit=60)]
@@ -116,8 +146,7 @@ class ContextBuilder(Component):
 
     async def thread_with(self, channel, trigger, user_id=None):
         user_id = user_id or trigger.author.id
-        history = [m async for m in channel.history(limit=100)]
-        history = [m for m in history if self.messages.usable(m)]
+        history = [m for m in await self.recent_history(channel, 100) if self.messages.usable(m)]
         self.state.last_history[channel.id] = history
         chain = [m for m in await self.reply_chain(trigger) if self.messages.usable(m)] if trigger else []
         ids = {m.id for m in chain}
@@ -138,11 +167,11 @@ class ContextBuilder(Component):
         target = trigger
         around = []
         if mode == "dm":
-            msgs = [m async for m in channel.history(limit=self.cfg.CONTEXT_MSGS)]
+            msgs = await self.recent_history(channel, self.cfg.CONTEXT_MSGS)
             msgs = list(reversed(self.within_gap([m for m in msgs if self.messages.usable(m)])))
             names = False
         elif mode == "ambient":
-            window = [m async for m in channel.history(limit=self.cfg.AMBIENT_MSGS)]
+            window = await self.recent_history(channel, self.cfg.AMBIENT_MSGS)
             window = list(reversed(self.within_gap([m for m in window if self.messages.usable(m)])))
             target = self.app.ambient.pick_target(window) or trigger
             msgs = [m for m in window if m.id <= target.id]

@@ -25,6 +25,7 @@ from mitski.chat.state import ChatState
 from mitski.chat.style import Style
 from mitski.core import logs
 from mitski.core.clock import Clock
+from mitski.core.identity import Identity
 from mitski.core.metrics import Metrics
 from mitski.core.tasks import Background
 from mitski.llm.client import LlamaClient
@@ -35,7 +36,9 @@ from mitski.media.extras import Extras
 from mitski.media.reactions import Reactions
 from mitski.media.youtube import YouTube
 from mitski.memory.activity import Tracker
+from mitski.memory.knowledge import Knowledge
 from mitski.memory.memory import Memory
+from mitski.memory.servers import ServerNotes
 from mitski.reminders.scheduler import ReminderScheduler
 from mitski.reminders.store import Reminders
 from mitski.report import startup_report
@@ -102,6 +105,9 @@ class App:
         self.ambient = Ambient(self)
         self.ages = AgeGuard(self)
         self.policy = ContentPolicy(self)
+        self.identity = Identity(cfg)
+        self.servers = ServerNotes(self)
+        self.knowledge = Knowledge(self)
         self.situation = Situation(self)
         self.drafts = DraftFilter(self)
         self.review = DraftReview(self)
@@ -259,6 +265,8 @@ class App:
         self.feelings.load()
         self.custom_status.load()
         self.policy.load()
+        self.servers.load()
+        self.knowledge.load()
         self.ages.load()
         self.owner.load()
         self.away.load(self.owner.data.get("quiet_until", 0))

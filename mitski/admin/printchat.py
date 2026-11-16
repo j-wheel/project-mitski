@@ -26,7 +26,7 @@ RENDER_TIMEOUT = 600
 PNG_WIDTH = 860
 PNG_SLICE = 12000
 PNG_MEASURE_HEIGHT = 1000
-PNG_MAX_HEIGHT = 150000
+PNG_MAX_HEIGHT = 1500000
 BACKGROUND = (49, 51, 56)
 MEASURE = (
     "<script>window.addEventListener('load',function(){document.documentElement.setAttribute('data-height',"
@@ -163,8 +163,6 @@ def _embed(e):
         "fields": [(str(f.name), str(f.value)) for f in getattr(e, "fields", None) or []],
     }
 
-
-# ---- discord markdown, on already-escaped text ----
 
 CUSTOM_EMOJI = re.compile(r"&lt;(a?):(\w{2,32}):(\d{15,21})&gt;")
 USER_MENTION = re.compile(r"&lt;@!?(\d{15,21})&gt;")

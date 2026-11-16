@@ -9,7 +9,7 @@ import aiohttp
 from mitski.core import logs
 from mitski.core.metrics import Metrics
 from mitski.llm import prompt_format
-from mitski.llm.client import ModelUnavailable
+from mitski.llm.client import ModelUnavailable, stopped_at_limit
 
 log = logs.get("helper")
 
@@ -56,19 +56,35 @@ class HelperModel:
 
     async def ask(self, system, user_text, schema=None, max_tokens=700, think=False):
         if self.url:
-            return Answer(await self._ask_openai(system, user_text, schema, max_tokens))
+            text, cut_off = await self._ask_openai(system, user_text, schema, max_tokens)
+            if cut_off and schema is not None:
+                log.info("a helper answer ran out of room at %d tokens, asking again with twice that", max_tokens)
+                text, _ = await self._ask_openai(system, user_text, schema, max_tokens * 2)
+            return Answer(text)
         fmt = self.app.llm.fmt
         prompt, thought = fmt.instruct(system, user_text), ""
         if think and self.think_on:
             base = fmt.instruct(system, user_text, think=True)
             try:
                 thought = (await self.app.llm.think(base, self.think_tokens)).strip()
+            except ModelUnavailable as e:
+                log.info("thinking it through didn't work (%s), answering without it", e)
+                thought = ""
             except Exception:
                 log.warning("thinking failed, answering without it", exc_info=True)
                 thought = ""
             if thought:
                 prompt = fmt.after_thinking(base, thought)
-        text = await self.app.llm.helper(prompt, temperature=0.2, n_predict=max_tokens, json_schema=schema)
+        data = await self.app.llm.generate(
+            prompt, temperature=0.2, n_predict=max_tokens, json_schema=schema, helper=True, raw=True
+        )
+        if stopped_at_limit(data, max_tokens) and schema is not None:
+            log.info("a helper answer ran out of room at %d tokens, asking again with twice that", max_tokens)
+            Metrics.event("helper out of room")
+            data = await self.app.llm.generate(
+                prompt, temperature=0.2, n_predict=max_tokens * 2, json_schema=schema, helper=True, raw=True
+            )
+        text = data.get("content", "") if isinstance(data, dict) else str(data or "")
         return Answer(text, thought)
 
     async def ask_json(self, system, user_text, schema, max_tokens=400, think=False):
@@ -132,7 +148,8 @@ class HelperModel:
                     Metrics.llm_call("helper", time.monotonic() - start)
                     if mode is not None:
                         self.json_mode = mode
-                    return ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                    choice = (data.get("choices") or [{}])[0]
+                    return (choice.get("message") or {}).get("content") or "", choice.get("finish_reason") == "length"
                 body = (await r.text())[:300]
             if mode == "json_schema" and status in (400, 422, 500):
                 continue

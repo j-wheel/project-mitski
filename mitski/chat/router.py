@@ -56,6 +56,7 @@ class MessageRouter(Component):
         self.app.ages.check_member(author)
         self.state.activity[cid].append(time.monotonic())
         self.state.known_names[msg.guild.id].update({short_name(author).lower(), author.name.lower()})
+        self.app.servers.heard_in(msg)
         if not await self._past_away_gate(msg):
             return
         if cid not in self.state.threshold_base:

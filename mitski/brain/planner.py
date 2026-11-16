@@ -45,6 +45,10 @@ class Thought:
     topics: list | None = None
     length: str = "short"
     ask: str = "none"
+    mood: str = "neutral"
+    subtext: str = ""
+    move: str = ""
+    follow_up: str = ""
 
     def __post_init__(self):
         self.notes = [n for n in self.notes if n]
@@ -55,7 +59,18 @@ class Thought:
         return self.reply_type in prompts.ANSWERY and bool(self.brief)
 
     def without_plan(self):
-        return replace(self, brief="", wants="")
+        return replace(self, brief="", wants="", move="", follow_up="")
+
+
+@dataclass(frozen=True)
+class Read:
+    """How she reads them before replying: what they want, how they seem, what's under it, what she'll do."""
+
+    wants: str = ""
+    mood: str = "neutral"
+    subtext: str = ""
+    move: str = ""
+    follow_up: str = ""
 
 
 @dataclass
@@ -75,6 +90,7 @@ class Question:
     orders: str
     recent: str
     about: str
+    knows: str = ""
 
 
 def search_query(text, her):
@@ -92,6 +108,7 @@ class Brain(Component):
     def __init__(self, app):
         super().__init__(app)
         self.done = BoundedDict(500)
+        self.thinking = {}
 
     @property
     def enabled(self):
@@ -130,8 +147,20 @@ class Brain(Component):
             return Thought()
         if target.id in self.done:
             return self.done[target.id]
+        running = self.thinking.get(target.id)
+        if running is not None:
+            try:
+                return await asyncio.shield(running)
+            except Exception:
+                log.debug("the early plan for %s failed, planning again", target.id)
         q = self._question(target, msgs, channel, explicit, to_her, owner, orders, said, parts)
-        thought = await self._plan(q)
+        task = asyncio.ensure_future(self._plan(q))
+        self.thinking[target.id] = task
+        try:
+            thought = await asyncio.shield(task)
+        finally:
+            if self.thinking.get(target.id) is task:
+                self.thinking.pop(target.id, None)
         self.done[target.id] = thought
         return thought
 
@@ -153,7 +182,36 @@ class Brain(Component):
             orders=orders,
             recent=self._recent_chat(msgs),
             about=self._replying_to(target),
+            knows=self._knows(target.author, newest),
         )
+
+    def _knows(self, user, said):
+        """A few lines on who they are to her and how she's doing, so she reads them like someone who knows them:
+        what she knows about them, how she feels about them, what they last talked about, and her own mood."""
+        memory, feelings = self.memory, getattr(self.app, "feelings", None)
+        name = memory.call_name(user) or short_name(user)
+        out = []
+        d = memory.get(user.id) if memory.enabled else None
+        if d:
+            bits = [memory.slot_summary(d)]
+            bits += [f["text"] for f in memory.pick_facts(d, said, 4)]
+            plans = sorted((f for f in d["facts"] if f.get("cat") == "plans"), key=lambda f: -f.get("t", 0))[:2]
+            bits += [f["text"] + (f" ({f['when']})" if f.get("when") else "") for f in plans]
+            bits = [b for b in bits if b]
+            if bits:
+                out.append(f"What you know about {name}: " + "; ".join(bits) + ".")
+            if d.get("portrait"):
+                out.append(f"Who {name} is to you: {cut(d['portrait'], 240)}")
+            feel = feelings.summary(d, user.id) if feelings is not None else ""
+            if feel:
+                out.append(f"How you feel about {name}: {feel}.")
+            last = memory._last_episodes(d, 1)
+            if last:
+                out.append(f"Last time you talked: {cut(last[-1]['summary'], 200)}")
+        mood = feelings.mood_note() if feelings is not None else ""
+        if mood:
+            out.append("Your own mood: " + mood.split(". Let it colour")[0].replace("How you feel right now: ", ""))
+        return "\n".join(out)
 
     def _who_is(self, user):
         return short_name(self.me) if user.id == self.me.id else (self.memory.call_name(user) or short_name(user))
@@ -210,11 +268,16 @@ class Brain(Component):
         reply_type = plan.get("reply_type") if plan.get("reply_type") in prompts.REPLY_TYPES else "other"
         length = plan.get("length") if plan.get("length") in prompts.LENGTHS else "short"
         ask = plan.get("ask") if plan.get("ask") in prompts.ASKS else "none"
-        wants = voice.to_you(cut(str(plan.get("wants") or "").strip(), 160), self.messages.own_names())
+        own = self.messages.own_names()
+        wants = voice.to_you(cut(str(plan.get("wants") or "").strip(), 160), own)
+        mood = plan.get("mood") if plan.get("mood") in prompts.MOODS else "neutral"
+        subtext = voice.to_you(cut(str(plan.get("subtext") or "").strip(), 160), own)
+        move = voice.to_you(cut(str(plan.get("move") or "").strip(), 180), own)
+        follow_up = cut(str(plan.get("follow_up") or "").strip(), 120)
         answer = cut(str(plan.get("answer") or "").strip(), prompts.BRIEF_MAX)
         if not q.explicit and to_her == "someone_else":
             log.info("%s: not for her (%s)", q.name, wants or "talking to someone else")
-            return Thought(to_her=to_her, reply_type=reply_type, wants=wants)
+            return Thought(to_her=to_her, reply_type=reply_type, wants=wants, mood=mood)
         steps = self._steps(plan, tools)
         if self._should_search(q, tools, steps, reply_type):
             query = search_query(q.newest, q.her)
@@ -236,7 +299,8 @@ class Brain(Component):
             out = await self.app.helper.ask_json(*prompts.brief_request(q, checked, answer))
             brief = clean_brief((out or {}).get("say")) or brief
         brief = self._in_her_voice(q, brief) if reply_type in prompts.PLANNED else ""
-        notes = self._notes(q, to_her, reply_type, wants, brief, checked, failed)
+        read = Read(wants, mood, subtext, move, follow_up)
+        notes = self._notes(q, to_her, reply_type, read, brief, checked, failed)
         if skipped and not brief and not checked:
             notes.append(prompts.SKIPPED_LOOKUP_NOTE)
         actions = self._actions(q, plan)
@@ -246,7 +310,7 @@ class Brain(Component):
             plan,
             to_her,
             ", ".join(label + (["didn't google"] if skipped else [])),
-            wants,
+            read,
             brief,
             steps,
             checked,
@@ -263,6 +327,10 @@ class Brain(Component):
             topics=self._topics(q, plan),
             length=length,
             ask=ask,
+            mood=mood,
+            subtext=subtext,
+            move=move,
+            follow_up=follow_up,
         )
 
     def _skips_lookup(self, q, ask, steps):
@@ -289,8 +357,16 @@ class Brain(Component):
         return bool(ASKED_TO_SEARCH.search(text) or (reply_type == "answer_question" and CURRENT_STUFF.search(text)))
 
     @staticmethod
-    def _notes(q, to_her, reply_type, wants, brief, checked, failed):
-        notes = [f"What {q.name} wants: {wants.rstrip('.')}."] if wants else []
+    def _notes(q, to_her, reply_type, read, brief, checked, failed):
+        notes = [f"What {q.name} wants: {read.wants.rstrip('.')}."] if read.wants else []
+        if read.mood not in ("", "neutral"):
+            notes.append(f"{q.name} seems {read.mood} right now.")
+        if read.subtext:
+            notes.append(f"Under the surface: {read.subtext.rstrip('.')}.")
+        if read.move:
+            notes.append(f"What you're going for: {read.move.rstrip('.')}.")
+        if read.follow_up:
+            notes.append(f"If it fits, you could ask them: {read.follow_up}")
         notes += checked
         if failed and not checked and reply_type == "answer_question" and not brief:
             notes.append("You tried to check but couldn't find out, so say you're not sure instead of guessing.")
@@ -335,18 +411,19 @@ class Brain(Component):
             return None
         return sorted({int(t) for t in plan["topics"] if isinstance(t, int) and 1 <= t <= len(q.parts)}) or None
 
-    async def _report(self, q, plan, to_her, reply_type, wants, brief, steps, checked, actions):
-        log.info(
-            "%s: %s (to %s) | %s%s%s%s%s",
-            q.name,
-            reply_type,
-            to_her,
+    async def _report(self, q, plan, to_her, reply_type, read, brief, steps, checked, actions):
+        head = f"{reply_type}, to {to_her}" + (f", {read.mood}" if read.mood not in ("", "neutral") else "")
+        parts = [
             ", ".join(f"{s['tool']}({s['input']})" for s in steps),
-            f" | wants: {wants}" if wants else "",
-            f" | answer: {brief}" if brief else "",
-            f" | do: {actions}" if actions else "",
-            f" | separate things: {plan.get('topics')}" if len(q.parts) >= 2 else "",
-        )
+            f"wants: {read.wants}" if read.wants else "",
+            f"under it: {read.subtext}" if read.subtext else "",
+            f"going for: {read.move}" if read.move else "",
+            f"could ask: {read.follow_up}" if read.follow_up else "",
+            f"answer: {brief}" if brief else "",
+            f"do: {actions}" if actions else "",
+            f"separate things: {plan.get('topics')}" if len(q.parts) >= 2 else "",
+        ]
+        log.info("%s: %s", q.name, " | ".join([head, *(p for p in parts if p)]))
         if steps or brief:
             await self.app.relay.post(
                 f"**thought about {q.name}'s message** ({reply_type}, to {to_her})\n"

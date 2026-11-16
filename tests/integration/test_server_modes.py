@@ -130,8 +130,8 @@ async def test_the_notes_model_can_turn_a_reply_down(world, monkeypatch):
     world.app.cfg.SAFETY_REVIEW = True
     verdicts = [{"ok": False}, {"ok": True}]
 
-    async def ask_json(*args, **kwargs):
-        return verdicts.pop(0)
+    async def ask_json(system, user, schema, *args, **kwargs):
+        return verdicts.pop(0) if "ok" in schema["properties"] and len(schema["properties"]) == 1 else None
 
     monkeypatch.setattr(world.app.helper, "ask_json", ask_json)
     world.replies += ["seems fine to the word list", "actually fine"]

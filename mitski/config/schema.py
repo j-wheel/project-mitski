@@ -40,6 +40,15 @@ SECTIONS = (
                 "",
                 "who she always is, added to the persona every time (stay in character, no assistant talk, no owner talk). empty = the built-in one, {name} = her name",
             ),
+            Option(
+                "HER_AGE",
+                0,
+                "her age. it's in every prompt as a fact that never changes, and any reply or memory of hers that "
+                "says another age is redone or dropped. 0 = not set",
+            ),
+            Option("HER_GENDER", "", 'her gender the same way, e.g. "girl" or "guy". empty = not set'),
+            Option("HER_FROM", "", 'the country she\'s from, the same way, e.g. "Portugal". empty = not set'),
+            Option("HER_CITY", "", 'the city she lives in, e.g. "Lisbon". empty = not set'),
             Option("LLM_URL", "http://127.0.0.1:5111", "llama-server running qwen3.8 27b"),
             Option(
                 "PROMPT_FORMAT",
@@ -67,8 +76,8 @@ SECTIONS = (
             Option(
                 "STATUS_AUTO",
                 True,
-                "her model writes her a new custom status and emoji every STATUS_AUTO_MIN minutes, from her persona, "
-                "her mood and what she's up to (data/status.json). discord allows 128 characters",
+                "her model writes her a new custom status and emoji every STATUS_AUTO_MIN minutes, a different kind "
+                "each time (data/status.json). discord allows 128 characters",
             ),
             Option("STATUS_AUTO_MIN", 60, "minutes between new custom statuses"),
         ),
@@ -441,6 +450,20 @@ SECTIONS = (
                 "remember what she says about herself, so her backstory stays consistent (data/memory.db)",
             ),
             Option("SELF_MAX", 30, "facts kept about herself"),
+            Option(
+                "SERVER_NOTES",
+                True,
+                "she also remembers things about each server she's in (what it's about, the regulars' running jokes, "
+                "events, what people there are into), from its channels and what's said (data/servers.json)",
+            ),
+            Option("SERVER_NOTES_EVERY", 150, "messages in a server between those updates (at most one every 6 hours)"),
+            Option(
+                "LOOK_UP_INTERESTS",
+                True,
+                "when someone she knows is into something she doesn't know (a band, a game, a show), she googles it "
+                "once in the background and remembers what it is (data/knowledge.json, needs a SEARCH provider)",
+            ),
+            Option("LOOK_UP_PER_HOUR", 6, "most of those lookups in an hour"),
         ),
     ),
     Section(
@@ -453,6 +476,13 @@ SECTIONS = (
                 "PROFILE_TRACK",
                 True,
                 "remember what people play (and how long), listen to, watch and their statuses (only people she's talked to)",
+            ),
+            Option(
+                "PROFILE_READ",
+                True,
+                "she reads the discord profile of people she talks to (bio, pronouns, connected accounts) once a day "
+                "and keeps it with what she knows about them, so she gets a picture of who they are. shares "
+                "AGE_CHECK_BIOS_PER_HOUR",
             ),
         ),
     ),
@@ -538,6 +568,12 @@ SECTIONS = (
                 "VISION_MAX_SIDE", 896, "images get shrunk to this many pixels on the longest side before she looks"
             ),
             Option("VISION_FRAMES", 4, "frames sampled from gifs, animated stickers and videos"),
+            Option(
+                "VISION_TOKENS",
+                400,
+                "how long a description may be (a closer look when someone asks gets twice this). one that runs out "
+                "keeps its whole sentences",
+            ),
             Option("VISION_CONTEXT_MSGS", 8, "how many of the newest messages she reads get looked at"),
             Option(
                 "VISION_INDEX_STICKERS",
@@ -626,6 +662,13 @@ SECTIONS = (
             Option("DEBOUNCE_SEC", 4, "wait until someone stops sending/typing before answering them"),
             Option("DISTRACTED_CHANCE", 0.15, "sometimes she takes a while (dms and joining in only)"),
             Option("DISTRACTED_DELAY", [15, 60], "seconds"),
+            Option(
+                "QUICK_REPLY_CHANCE",
+                0.45,
+                "in a live back-and-forth (she's been talking with them, or spoke there in the last 2 minutes), chance "
+                "she answers quickly this time: her read delay and wait are cut to a fraction. out of the blue it's a "
+                "third of this. 0 = always her usual pace",
+            ),
         ),
     ),
     Section(
@@ -721,8 +764,16 @@ SECTIONS = (
                 None,
                 "instruction put before memory searches, null = the one qwen3-embedding expects",
             ),
-            Option("LLM_TIMEOUT_SEC", 60.0, "longest a single model call may take before it's given up on"),
-            Option("LLM_PAUSE_AFTER", 3, "failed model calls in a row before she stops trying for a while"),
+            Option(
+                "LLM_TIMEOUT_SEC",
+                60.0,
+                "longest a single model call may take before it's given up on (background memory work gets 3x this)",
+            ),
+            Option(
+                "LLM_PAUSE_AFTER",
+                3,
+                "failed model calls in a row before she stops trying for a while (background work doesn't count)",
+            ),
             Option("LLM_PAUSE_SEC", 60.0, "how long she waits before trying the model again after that"),
             Option("LOG_LEVEL", "INFO", "console log level: DEBUG, INFO, WARNING"),
             Option(

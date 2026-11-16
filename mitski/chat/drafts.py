@@ -4,6 +4,7 @@ from mitski.chat.patterns import (
     ANY_URL,
     CHANNEL_MENTION,
     EVERYONE_MENTION,
+    JUST_HI,
     LIST_LINE,
     ROBOTIC,
     ROLE_MENTION,
@@ -85,15 +86,30 @@ class DraftFilter(Component):
             Metrics.event("third person fixed")
         return fixed
 
+    def greeting(self, said):
+        """Whether what they said is only hellos ("mitski hiii", "hey / hows it going" isn't), so a hi back fits."""
+        names = [re.escape(n) for n in self.messages.own_names() if n]
+        own = re.compile(r"\b(?:" + "|".join(names) + r")\b", re.I) if names else None
+        for part in said.split(" / "):
+            part = USER_MENTION.sub("", part)
+            part = own.sub("", part) if own else part
+            if part.strip() and not JUST_HI.match(part.strip()):
+                return False
+        return True
+
     def echoed(self, lines, msgs):
         theirs = list(dict.fromkeys(self.messages.text(m) for m in list(msgs) if m.author.id != self.me.id))[-40:]
         whole = {_norm(t) for t in theirs} | {_norm(line) for t in theirs for line in t.split("\n")}
         blob = " " + " ".join(_norm(t) for t in theirs) + " "
         return [ln for ln in lines if len(_norm(ln)) >= 8 and (_norm(ln) in whole or f" {_norm(ln)} " in blob)]
 
-    def problem(self, lines, msgs, honest=False, adult=True, direct=False, channel=None, minors=False):
+    def problem(self, lines, msgs, honest=False, adult=True, direct=False, channel=None, minors=False, said=None):
         if any(ROBOTIC.search(ln) for ln in lines):
             return "robotic"
+        if any(self.app.identity.wrong(ln) for ln in lines):
+            return "out of character"
+        if said and lines and all(JUST_HI.match(ln) for ln in lines) and not self.greeting(said):
+            return "off topic"
         if any(SERVILE.search(ln) for ln in lines) or sum(1 for ln in lines if LIST_LINE.match(ln)) >= 2:
             return "servile"
         if not adult and any(explicit(ln) for ln in lines):

@@ -24,6 +24,7 @@ class Sender(Component):
     def __init__(self, app):
         super().__init__(app)
         self.last_sent = {}
+        self.last_at = {}
 
     def remember(self, sent, user_id):
         for m in sent:
@@ -46,12 +47,13 @@ class Sender(Component):
         }
         return not convo.ping_forbidden([o["text"] for o in self.app.owner.data.get("orders", [])], names)
 
-    def styled(self, lines, parts, serious, layout):
+    def styled(self, lines, parts, serious, layout, longer=False):
         if parts and layout == shape.BLOCK:
             return [self.app.style.joined(parts, serious)]
         if parts and layout == shape.THREADED:
             return [self.app.style.joined([part], serious) for part in parts]
-        return self.app.style.reply(lines, serious)
+        out = self.app.style.reply(lines, serious)
+        return shape.bubbles(out, self.cfg.MAX_LINES if longer else min(shape.QUICK_MAX, self.cfg.MAX_LINES))
 
     async def send(
         self,
@@ -70,8 +72,12 @@ class Sender(Component):
         layout=shape.QUICK,
         targets=None,
         longer=False,
+        owned=None,
+        job=None,
     ):
-        styled = self.styled(lines, parts, serious, layout)
+        """owned: the messages this reply was written for ({message id: author id}). Nothing she sends here can
+        reply to or ping anything outside it, whatever the delivery plan says."""
+        styled = self.styled(lines, parts, serious, layout, longer)
         recent = [uid for _, uid in list(self.state.chan_log.get(channel.id, ()))[-30:]]
         audience = [*recent, *(u.id for u in (people or {}).values()), getattr(ping, "id", None)]
         if reply_to is not None:
@@ -80,6 +86,11 @@ class Sender(Component):
         if len(lines) < len(styled):
             log.warning("held back %d explicit line(s) in %s", len(styled) - len(lines), channel)
             Metrics.event("explicit held back")
+        wrong = [ln for ln in lines if self.app.identity.wrong(ln)]
+        if wrong:
+            log.warning("held back %d line(s) that got her own age, gender or country wrong: %s", len(wrong), wrong)
+            Metrics.event("out of character held back")
+            lines = [ln for ln in lines if ln not in wrong]
         kept_targets = []
         if targets and layout == shape.THREADED:
             for text, target in zip(styled, targets, strict=False):
@@ -93,6 +104,8 @@ class Sender(Component):
             ping_end=ping_end,
             reply_ping=(self.cfg.reply_ping is True) if reply_ping is None else reply_ping,
             decided=plan is None,
+            owned=owned,
+            job=job,
         )
         if ping is not None and plan is None:
             lines = convo.add_ping(lines, ping.id, ping_end)
@@ -212,6 +225,15 @@ class Sender(Component):
         if out.own_target is not None:
             own, opens_it = out.own_target
             target = own if opens_it or self.others_since(out.channel, out.sent[-1].id) else None
+        if target is not None and not out.owns(target):
+            log.error(
+                "reply #%s was about to reply to %s's message %s, which it wasn't written for: sending it plain",
+                out.job,
+                target.author,
+                target.id,
+            )
+            Metrics.event("wrong target blocked")
+            target = None
         msg = None
         if target is not None:
             try:
@@ -226,6 +248,7 @@ class Sender(Component):
             msg = await out.channel.send(line, allowed_mentions=mentions)
         out.sent.append(msg)
         self.last_sent[out.channel.id] = msg.id
+        self.last_at[out.channel.id] = time.monotonic()
         Metrics.sent()
         self.state.recent_said[out.channel.id].append(line)
         if out.guild is not None:
@@ -237,7 +260,9 @@ class Sender(Component):
 
 
 class Outgoing:
-    def __init__(self, channel, reply_to, anchor, ping, ping_end, reply_ping, decided):
+    def __init__(self, channel, reply_to, anchor, ping, ping_end, reply_ping, decided, owned=None, job=None):
+        self.owned = owned
+        self.job = job
         self.channel = channel
         self.guild = getattr(channel, "guild", None)
         self.reply_to = reply_to
@@ -263,8 +288,19 @@ class Outgoing:
             self.reply_ping = delivery.reply_ping
         return True
 
+    def owns(self, msg):
+        return self.owned is None or msg.id in self.owned
+
+    def may_ping(self, user):
+        return self.owned is None or user.id in self.owned.values()
+
     def with_ping(self, line, is_last):
         if self.ping is None or self.ping_done or (self.ping_end and not is_last):
+            return line
+        if not self.may_ping(self.ping):
+            log.error("reply #%s was about to ping %s, who it wasn't written for: no ping", self.job, self.ping)
+            Metrics.event("wrong target blocked")
+            self.ping_done = True
             return line
         tag = f"<@{self.ping.id}>"
         if tag not in line:

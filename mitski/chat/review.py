@@ -79,14 +79,18 @@ class DraftReview(Component):
             for mid, uid in sorted(seen.items())
         ]
 
-    async def check(self, lines, anchor, msgs, around):
+    async def check(self, lines, anchor, msgs, around, always=False):
+        """Whether her draft fits the message it's for. With several people around it also says whose message it
+        really answers. always: check it even one on one, where the only way to miss is a reply that doesn't
+        follow from what they said at all ("hii everyone" to a question)."""
         pool = sorted({m.id: m for m in list(msgs)[-12:] + list(around) + [anchor]}.values(), key=lambda m: m.id)[-15:]
         if anchor not in pool:
             pool = pool[1:] + [anchor]
             pool.sort(key=lambda m: m.id)
-        if len({m.author.id for m in pool if m.author.id != self.me.id}) < 2 and not any(
+        alone = len({m.author.id for m in pool if m.author.id != self.me.id}) < 2 and not any(
             m.author.id == self.me.id and self.state.addressed.get(m.id) not in (None, anchor.author.id) for m in pool
-        ):
+        )
+        if alone and not always:
             return None, None, False
         if not self.cfg.ADDRESSEE_CHECK:
             latest = {}
@@ -145,7 +149,7 @@ class DraftReview(Component):
         lines = self.app.drafts.tidy(text, channel.id, others)
         if (
             not lines
-            or self.app.drafts.problem(lines, seen, channel=channel)
+            or self.app.drafts.problem(lines, seen, channel=channel, said=self.app.addressing.burst_text(burst))
             or await self.app.policy.judged_unsafe(lines, channel)
         ):
             return None

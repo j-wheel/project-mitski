@@ -103,4 +103,9 @@ def test_tidy_caption(raw, caption):
 
 
 def test_tidy_detail_is_capped():
-    assert len(tidy_detail("word " * 400)) <= 900
+    assert len(tidy_detail("word " * 800)) <= 1800
+
+
+def test_a_long_description_ends_on_a_whole_sentence():
+    text = tidy_detail("This is a sentence about the picture. " * 80)
+    assert text.endswith("picture.") and len(text) <= 1800

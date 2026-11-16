@@ -226,7 +226,9 @@ class Vision:
         if image is None:
             return ""
         try:
-            raw = await self.client.describe(prompts.detail_prompt(it, question), image, max_tokens=320)
+            raw = await self.client.describe(
+                prompts.detail_prompt(it, question), image, max_tokens=self.cfg.VISION_TOKENS * 2
+            )
         except VisionUnsupported as e:
             self._unsupported(str(e))
             return ""

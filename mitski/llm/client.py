@@ -15,6 +15,37 @@ log = logs.get("llm")
 
 THINKING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.0}
 REFUSED = re.compile(r"lora|adapter|slot", re.I)
+BACKGROUND_TIMEOUT = 3
+SLOW_SEC = 20.0
+SLOW_TOKENS_PER_SEC = 5.0
+CHARS_PER_TOKEN = 3.0
+CTX_MARGIN = 256
+SMALL_CTX = 12288
+SENTENCE_END = re.compile(r"[.!?…](?=\s|$)")
+
+
+def tokens_guess(text):
+    """A cautious guess (chat text with emojis and slang runs short of 4 characters a token)."""
+    return int(len(text or "") / CHARS_PER_TOKEN) + 1
+
+
+def stopped_at_limit(data, n=None):
+    """Whether llama-server stopped because it ran out of tokens, not because the answer was done."""
+    if not isinstance(data, dict):
+        return False
+    if "stop_type" in data or "stopped_limit" in data:
+        return data.get("stop_type") == "limit" or bool(data.get("stopped_limit"))
+    return n is not None and int(data.get("tokens_predicted") or 0) >= n
+
+
+def drop_unfinished(text):
+    """What's left of an answer that got cut off: the lines before the cut one, or the whole sentences of a single
+    line, never half a sentence."""
+    lines = [ln for ln in (text or "").rstrip().split("\n") if ln.strip()]
+    if len(lines) > 1:
+        return "\n".join(lines[:-1])
+    ends = list(SENTENCE_END.finditer(text or ""))
+    return text[: ends[-1].end()].strip() if ends else (text or "").strip()
 
 
 class ModelUnavailable(Exception):
@@ -49,6 +80,7 @@ class ServerInfo:
     slots: int = 1
     lora: list = field(default_factory=list)
     checked: bool = False
+    n_ctx: int = 0
 
 
 class LlamaClient(Component):
@@ -67,8 +99,33 @@ class LlamaClient(Component):
     def url(self):
         return self.cfg.llm_url
 
-    def prompt(self, turns, persona=None, notes=None, reopen=False):
-        return self.fmt.chat(persona or self.cfg.PERSONA, turns, notes, reopen=reopen)
+    def prompt(self, turns, persona=None, notes=None, reopen=False, n_predict=None):
+        """Her chat prompt. If it wouldn't fit the model's context with room for the answer, the oldest messages
+        are left out (never her persona or notes), so llama-server never has to cut it somewhere random."""
+        persona = persona or self.cfg.PERSONA
+        text = self.fmt.chat(persona, turns, notes, reopen=reopen)
+        room = self.room(n_predict or self.cfg.MAX_TOKENS)
+        if room is None or tokens_guess(text) <= room:
+            return text
+        turns, dropped = list(turns), 0
+        while len(turns) > 2 and tokens_guess(text) > room:
+            turns, dropped = turns[1:], dropped + 1
+            text = self.fmt.chat(persona, turns, notes, reopen=reopen)
+        log.info(
+            "her prompt didn't fit the model's %d-token context, left out the %d oldest messages",
+            self.info.n_ctx,
+            dropped,
+        )
+        return text
+
+    def room(self, n_predict):
+        """Tokens a prompt can take with n_predict left for the answer, None if the context size isn't known."""
+        return self.info.n_ctx - n_predict - CTX_MARGIN if self.info.n_ctx else None
+
+    def room_chars(self, reserved_tokens, default):
+        """How many characters of chat fit next to reserved_tokens of instructions and answer."""
+        room = self.room(reserved_tokens)
+        return default if room is None else max(2000, min(default, int(room * CHARS_PER_TOKEN)))
 
     def _sampling(self, helper, thinking):
         if thinking:
@@ -126,20 +183,66 @@ class LlamaClient(Component):
             Metrics.event("model_paused")
             raise ModelUnavailable(f"llama-server at {self.url} failed {self.breaker.failures} times in a row")
         payload = self._payload(prompt, temperature, n_predict, json_schema, helper, stop, thinking, lora_scale)
+        room = self.room(payload["n_predict"])
+        if room is not None and tokens_guess(prompt) > room:
+            log.warning(
+                "a %s prompt is about %d tokens, more than fits the model's %d-token context with %d for the answer: "
+                "start llama-server with a bigger -c",
+                "helper" if helper else "reply",
+                tokens_guess(prompt),
+                self.info.n_ctx,
+                payload["n_predict"],
+            )
+        background = helper and gpu.PRIORITY.get() == gpu.BACKGROUND
+        timeout = self.cfg.LLM_TIMEOUT_SEC * (BACKGROUND_TIMEOUT if background else 1)
         start = time.monotonic()
         async with self.app.gpu.at(None if helper else gpu.REPLY):
+            sent = time.monotonic()
             try:
-                data = await asyncio.wait_for(self._post(payload), self.cfg.LLM_TIMEOUT_SEC)
+                data = await asyncio.wait_for(self._post(payload), timeout)
             except (aiohttp.ClientError, TimeoutError) as e:
-                self._failed(e)
-                raise ModelUnavailable(f"{type(e).__name__}: {e}") from e
+                self._failed(e, background, time.monotonic() - sent, tokens_guess(prompt))
+                raise ModelUnavailable(f"{type(e).__name__}: {e}" if str(e) else type(e).__name__) from e
         self.breaker.worked()
+        took = time.monotonic() - sent
+        if took >= SLOW_SEC:
+            self._slow(took, data, "think" if thinking else "helper" if helper else "reply")
         Metrics.llm_call("think" if thinking else "helper" if helper else "reply", time.monotonic() - start)
         return data if raw else data.get("content", "")
 
-    def _failed(self, error):
+    def _slow(self, took, data, kind):
+        """A call that took a long time, with llama-server's own numbers, so it's clear what was slow."""
+        t = data.get("timings") or {} if isinstance(data, dict) else {}
+        prompt_n, prompt_rate = int(t.get("prompt_n") or 0), float(t.get("prompt_per_second") or 0)
+        made_n, made_rate = int(t.get("predicted_n") or 0), float(t.get("predicted_per_second") or 0)
+        hint = ""
+        if made_n and made_rate and made_rate < SLOW_TOKENS_PER_SEC:
+            hint = (
+                ": that's very slow generation. the GPU may be busy with something else, or out of VRAM (on windows "
+                "the driver then quietly spills into system RAM): try a smaller -c, or close what else uses the GPU"
+            )
+        log.info(
+            "a %s call took %.0fs (prompt %d tokens at %.0f/s, wrote %d at %.1f/s)%s",
+            kind,
+            took,
+            prompt_n,
+            prompt_rate,
+            made_n,
+            made_rate,
+            hint,
+        )
+
+    def _failed(self, error, background=False, took=0.0, prompt_tokens=0):
         Metrics.event("model_timeout" if isinstance(error, TimeoutError) else "model_error")
         self.app.metrics.count("model failures")
+        if background:
+            log.info(
+                "a background model call gave up after %.0fs (%s, prompt about %d tokens), she'll get to it later",
+                took,
+                type(error).__name__,
+                prompt_tokens,
+            )
+            return
         if self.breaker.failed():
             log.warning(
                 "llama-server failed %d times in a row (last: %r), pausing model calls for %ds",
@@ -175,16 +278,7 @@ class LlamaClient(Component):
             text = data.get("content", "") or ""
             thought += text
             used += int(data.get("tokens_predicted") or n)
-            hit_limit = (
-                data.get("stop_type") == "limit"
-                or data.get("stopped_limit")
-                or (
-                    "stop_type" not in data
-                    and "stopped_limit" not in data
-                    and int(data.get("tokens_predicted") or 0) >= n
-                )
-            )
-            if "</think>" in thought or not text or not hit_limit:
+            if "</think>" in thought or not text or not stopped_at_limit(data, n):
                 break
         return thought.split("</think>")[0]
 
@@ -199,6 +293,18 @@ class LlamaClient(Component):
             log.error("couldn't reach %s, is llama-server running?", self.url)
             return
         self.info.slots = int(props.get("total_slots") or 1)
+        settings = props.get("default_generation_settings") or {}
+        self.info.n_ctx = int(settings.get("n_ctx") or props.get("n_ctx") or 0)
+        if self.info.n_ctx and self.info.n_ctx < SMALL_CTX:
+            log.warning(
+                "the model's context is %d tokens per slot: her memory notes and longer chats need more, start "
+                "llama-server with -c %d or more (that's split between %d slot(s))",
+                self.info.n_ctx,
+                SMALL_CTX * 2 * self.info.slots,
+                self.info.slots,
+            )
+        elif self.info.n_ctx:
+            log.info("context: %d tokens per slot", self.info.n_ctx)
         self._check_template(str(props.get("chat_template") or ""))
         try:
             adapters = await self._get_json("/lora-adapters") or []

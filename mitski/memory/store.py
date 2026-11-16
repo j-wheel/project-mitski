@@ -112,11 +112,17 @@ class PeopleStore:
         if not names:
             return 0
         kept, changed = [], 0
+        identity = getattr(self.app, "identity", None)
         for f in self.own["facts"]:
             if BEING_AI_OR_HUMAN.search(f["text"]):
                 log.info(
                     "removed S%s %r: what she is comes from her identity note, not from memory", f["id"], f["text"]
                 )
+                changed += 1
+                continue
+            wrong = identity.wrong_fact(f["text"]) if identity is not None else None
+            if wrong:
+                log.info("removed S%s %r: it %s, which isn't true (HER_ facts)", f["id"], f["text"], wrong)
                 changed += 1
                 continue
             new = voice.own_fact_to_you(f["text"], names)
@@ -125,6 +131,39 @@ class PeopleStore:
             kept.append(f)
         self.own["facts"] = kept
         return changed
+
+    def saw_profile(self, user, profile):
+        """What their discord profile says (bio, pronouns, what accounts they connected), kept with the rest of
+        what she knows about them, so she has a picture of who they are before they've told her much."""
+        d = self.get(user.id)
+        if not d:
+            return
+        meta = getattr(profile, "metadata", None)
+        bio = str(getattr(profile, "guild_bio", None) or getattr(profile, "bio", None) or "").strip()
+        pronouns = str(getattr(meta, "pronouns", None) or "").strip()
+        accounts = []
+        for c in getattr(profile, "connections", None) or []:
+            kind = getattr(getattr(c, "type", None), "value", None) or str(getattr(c, "type", "") or "")
+            if kind and kind not in accounts:
+                accounts.append(kind)
+        seen = {"bio": cut(bio, 300), "pronouns": cut(pronouns, 40), "accounts": accounts[:8], "t": time.time()}
+        if {k: v for k, v in seen.items() if k != "t"} != {
+            k: v for k, v in (d.get("discord_profile") or {}).items() if k != "t"
+        }:
+            log.info("%s: read their discord profile (%s)", d.get("name"), ", ".join(k for k in seen if seen[k]))
+        d["discord_profile"] = seen
+        self.dirty = True
+
+    def profile_line(self, d, call):
+        p = d.get("discord_profile") or {}
+        bits = []
+        if p.get("bio"):
+            bits.append(f'bio "{p["bio"]}"')
+        if p.get("pronouns"):
+            bits.append(f"pronouns {p['pronouns']}")
+        if p.get("accounts"):
+            bits.append("connected " + ", ".join(p["accounts"]))
+        return f"{call}'s discord profile: " + "; ".join(bits) + "." if bits else ""
 
     def mark_dirty(self):
         self.dirty = True

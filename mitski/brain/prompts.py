@@ -35,11 +35,33 @@ PLANNED = ANSWERY | {"story"}
 LENGTHS = ("short", "longer")
 ASKS = ("none", "quick", "favor", "effort", "expert")
 BRIEF_MAX = 600
+MOODS = (
+    "neutral",
+    "happy",
+    "excited",
+    "proud",
+    "playful",
+    "flirty",
+    "curious",
+    "bored",
+    "tired",
+    "stressed",
+    "nervous",
+    "sad",
+    "hurt",
+    "annoyed",
+    "angry",
+    "confused",
+)
 PLAN = {
     "type": "object",
     "properties": {
         "to_her": {"type": "string", "enum": ["her", "someone_else", "everyone"]},
         "wants": {"type": "string", "maxLength": 160},
+        "mood": {"type": "string", "enum": list(MOODS)},
+        "subtext": {"type": "string", "maxLength": 160},
+        "move": {"type": "string", "maxLength": 180},
+        "follow_up": {"type": "string", "maxLength": 120},
         "reply_type": {"type": "string", "enum": list(REPLY_TYPES)},
         "length": {"type": "string", "enum": list(LENGTHS)},
         "ask": {"type": "string", "enum": list(ASKS)},
@@ -58,7 +80,19 @@ PLAN = {
             },
         },
     },
-    "required": ["to_her", "wants", "reply_type", "length", "ask", "answer", "tools"],
+    "required": [
+        "to_her",
+        "wants",
+        "mood",
+        "subtext",
+        "move",
+        "follow_up",
+        "reply_type",
+        "length",
+        "ask",
+        "answer",
+        "tools",
+    ],
     "additionalProperties": False,
 }
 PLAN_OWNER = {
@@ -217,17 +251,36 @@ def plan_request(q, tools, now):
         f"You're {her}'s quick inner thoughts right before she replies on discord. She's a real person in a group "
         f"chat: she works out who a message is for, what they want, checks things on her phone when she needs to, "
         f"and then actually answers instead of dodging. It's {now.strftime('%A %Y-%m-%d %H:%M')} where she is. "
-        f'Answer with JSON: {{"to_her": "...", "wants": "...", "reply_type": "...", "length": "...", "ask": "...", '
-        f'"answer": "...", "tools": [{{"tool": "...", "input": "..."}}]}}'
+        f'Answer with JSON: {{"to_her": "...", "wants": "...", "mood": "...", "subtext": "...", "move": "...", '
+        f'"follow_up": "...", "reply_type": "...", "length": "...", "ask": "...", "answer": "...", '
+        f'"tools": [{{"tool": "...", "input": "..."}}]}}'
     )
     user = (
         f"Recent chat:\n{q.recent}\n\n"
+        + (f"{q.knows}\n\n" if q.knows else "")
         + _newest_block(q)
         + _to_her_block(q)
         + _topics_block(q)
         + _remind_block(q)
-        + f'wants: one short sentence on what {name} wants. {her} is "you" here (like "to know if you\'re still '
-        f'here"), never her name or "she".\n'
+        + f"Read {name} the way a friend who knows them would, from their words, their tone and what you know "
+        f'about them. In everything you write here, {her} is "you" and "your", never her name or "she".\n'
+        f"wants: one short sentence on what {name} wants from you with this message, as specific as you can. "
+        f'Not just "to chat": what kind (to share good news and have you hype it, to vent and be listened to, '
+        f"to get your honest take, to tease you and be teased back, to make plans, to feel included, to know "
+        f"you're still around, to keep the bit going).\n"
+        f"mood: how {name} seems right now, one of {', '.join(MOODS)}. Go by how they write as well as what they "
+        f'say (lots of caps and "!!" vs short flat replies). neutral when there\'s no clear sign.\n'
+        f"subtext: what's under it, if anything, in one short sentence: what they're not saying outright (they're "
+        f"nervous about it and want to hear it'll be fine, they're fishing for a compliment, they feel left out, "
+        f"they're testing if you remember). \"\" when it's just what it says, which is most of the time.\n"
+        f"move: what you'll do in your reply, in one short sentence, the way a good friend who knows them would "
+        f'("hype it up, then ask how it went", "tease back, he started it", "just be there, no advice unless '
+        f'he asks", "answer, then get back to the game talk", "laugh and move on"). Fit it to what they want, '
+        f"their mood, what you know about them, how you feel about them and your own mood. Not every reply needs a "
+        f"question, and a reply can just be a reaction.\n"
+        f"follow_up: a question you'd genuinely want to ask them next, only if you're actually curious and you "
+        f'haven\'t just asked one yourself (look at the chat). Specific to them, not a generic "how are you". '
+        f'"" most of the time.\n'
         f"reply_type: one of {', '.join(REPLY_TYPES)}. story when they ask her to tell a story, a joke or something "
         f"funny or interesting that happened (joke is for when they're the ones joking around). no_reply if it "
         f"doesn't need an answer from her at all.\n"
@@ -258,7 +311,7 @@ def plan_request(q, tools, now):
         f"{name} or her past chats with them that aren't in the recent chat, recall is for OTHER people they "
         f"mention:\n" + "\n".join(f"- {k}: {v}" for k, v in tools.items()) + _search_block(tools) + _owner_block(q)
     )
-    budget = (500 if q.owner else 420) + (20 if len(q.parts) >= 2 else 0) + (60 if q.remind else 0)
+    budget = (900 if q.owner else 800) + (40 if len(q.parts) >= 2 else 0) + (80 if q.remind else 0)
     return system, user, plan_schema(q.owner, len(q.parts), q.remind), budget
 
 
@@ -273,4 +326,4 @@ def brief_request(q, checked, answer):
         f'about their feelings. Anything about {q.her} herself is "i" and "my", never her name or "she". '
         f"If what she found doesn't answer it, write \"couldn't find out\"."
     )
-    return system, user, BRIEF, 120
+    return system, user, BRIEF, 240

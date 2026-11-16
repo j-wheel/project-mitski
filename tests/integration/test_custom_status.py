@@ -3,7 +3,7 @@ import json
 import discord
 import pytest
 
-from mitski.social.status import STATUS_MAX, CustomStatus, fit, tidy, units
+from mitski.social.status import CLOCK, STATUS_MAX, CustomStatus, fit, stale, tidy, units
 
 
 def written(text, emoji="🌧️"):
@@ -94,7 +94,59 @@ async def test_she_doesnt_repeat_herself(world):
     await world.app.custom_status.refresh()
     world.replies.append(written("Same Thing"))
     assert not await world.app.custom_status.refresh()
-    assert "same thing" in world.prompts[-1]
+    assert "same thing" not in world.prompts[-1]
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [
+        ("sunday morning + heart is doing soft little bounces rn", "two things glued together"),
+        ("library mode rn / brain is a 404", "two things glued together"),
+        ("5:49am and half asleep", "a clock time"),
+        ("up at 4am again", "a clock time"),
+        ("my heart is doing cartwheels", "a phrase she's used before"),
+        ("wheeler can rot", "names wheeler"),
+    ],
+)
+def test_statuses_that_read_badly(text, why):
+    assert stale(text, ["heart is doing soft little bounces"], {"wheeler", "yuta"}) == why
+
+
+@pytest.mark.parametrize("text", ["pineapple on pizza is valid", "who else is still on season 2", "need a nap fr"])
+def test_statuses_that_are_fine(text):
+    assert stale(text, ["heart is doing soft little bounces"], {"wheeler", "yuta"}) is None
+
+
+async def test_a_bad_one_gets_another_go_with_a_different_idea(world):
+    world.replies += [written("7am deep sleep + heart is a puddle"), written("pineapple on pizza is valid")]
+    assert await world.app.custom_status.refresh()
+    assert world.app.custom_status.current[0] == "pineapple on pizza is valid"
+    first, second = (p.split("This time, make it ")[1].split(".")[0] for p in world.prompts[-2:])
+    assert first != second
+
+
+async def test_she_doesnt_name_people_she_knows(world):
+    world.app.memory.people["1"] = {"name": "yuta", "slots": {}}
+    world.replies += [written("yuta can rot"), written("yuta again"), written("yuta for real")]
+    assert not await world.app.custom_status.refresh()
+
+
+async def test_the_prompt_has_no_clock_or_old_statuses_to_copy(world):
+    world.replies.append(written("first one ever"))
+    await world.app.custom_status.refresh()
+    world.replies.append(written("totally new"))
+    await world.app.custom_status.refresh()
+    prompt = world.prompts[-1]
+    assert "first one ever" not in prompt and not CLOCK.search(prompt.split("This time")[1])
+
+
+async def test_the_kind_of_status_changes_from_hour_to_hour(world):
+    status = world.app.custom_status
+    for i, word in enumerate(("apples", "bananas", "cherries", "dates", "elderberries")):
+        world.replies.append(written(f"thinking about {word} {i}"))
+        await status.refresh()
+    angles = status.data["angles"]
+    assert len(angles) == len(set(angles))
 
 
 async def test_the_model_being_down_doesnt_break_anything(world, monkeypatch):

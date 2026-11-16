@@ -4,6 +4,7 @@ import re
 import aiohttp
 
 from mitski.core import logs
+from mitski.llm.client import drop_unfinished
 
 log = logs.get("vision")
 
@@ -62,7 +63,8 @@ class VisionClient:
             payload["model"] = self.model
         return payload
 
-    async def describe(self, prompt, image_b64, max_tokens=160):
+    async def describe(self, prompt, image_b64, max_tokens=None):
+        max_tokens = max_tokens or self.app.cfg.VISION_TOKENS
         payload = self._payload(prompt, image_b64, max_tokens)
         async with self.lock:
             status, body, data = await self._post(payload)
@@ -76,7 +78,12 @@ class VisionClient:
             if status in (400, 404, 415, 422, 500, 501) and NOT_SUPPORTED.search(body):
                 raise VisionUnsupported(body.strip()[:120])
             raise RuntimeError(f"vision server {status}: {body}")
-        return ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        choice = (data.get("choices") or [{}])[0]
+        text = (choice.get("message") or {}).get("content") or ""
+        if choice.get("finish_reason") == "length":
+            log.info("a description ran into VISION_TOKENS (%d), keeping its whole sentences", max_tokens)
+            text = drop_unfinished(text)
+        return text
 
     async def _post(self, payload):
         url = f"{self.url}/v1/chat/completions"

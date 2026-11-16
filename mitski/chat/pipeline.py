@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import random
 import re
 import time
@@ -18,15 +19,21 @@ from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.metrics import Metrics
 from mitski.core.text import cut
-from mitski.llm.client import ModelUnavailable
+from mitski.llm.client import ModelUnavailable, drop_unfinished, stopped_at_limit
 
 log = logs.get("pipeline")
 
-PLAN_SUMMARY = re.compile(r"What to tell them:|What happened, roughly:|What .{1,40} wants:")
+PLAN_SUMMARY = re.compile(
+    r"What to tell them:|What happened, roughly:|What .{1,40} wants:|What you're going for:|If it fits, you could ask"
+)
 TYPING_SETTLE = 7
+LIVE_SEC = 120
+COLD_SHARE = 0.3
+QUICK_PACE = (0.15, 0.45)
+QUICK_DEBOUNCE = 0.5
 LET_GO_CHANCE = 0.8
-BLANK_LINES_CHANCE = 0.5
 MANY_LINES_REPLY_CHANCE = 0.7
+SPACED_CHANCE = 0.5
 LOOK_POLL_SEC = 30
 SEEN_LATE_SEC = 180
 CATCHING_UP_SEC = (5, 180)
@@ -95,10 +102,15 @@ FIXES = {
 
 @dataclass
 class Reply:
+    """One reply job: the message (or few messages) it answers, and everything worked out on the way. What she writes
+    for a job only ever goes to that job's own messages (owned), whatever happens while she's busy or rewriting."""
+
     channel: object
     mode: str
     key: tuple | None = None
     trigger: object = None
+    job: int = 0
+    owned: dict = field(default_factory=dict)
     waited: float = 0.0
     was_doing: str = ""
     boss: bool = False
@@ -132,6 +144,12 @@ class Reply:
     minors: bool = False
     long: bool = False
     missed: float = 0.0
+    recall: object = None
+    ready_for: int | None = None
+
+    @property
+    def tag(self):
+        return f"{self.mode} #{self.job}"
 
     @property
     def guild(self):
@@ -159,6 +177,7 @@ class ReplyPipeline(Component):
         super().__init__(app)
         self.long_at = {}
         self.missed = BoundedDict(200)
+        self.jobs = itertools.count(1)
 
     def queue(self, channel, mode, msg):
         key = (channel.id, msg.author.id)
@@ -212,7 +231,7 @@ class ReplyPipeline(Component):
         if mode == "ambient" and lock.locked():
             return
         async with lock:
-            reply = Reply(channel, mode, key, trigger, waited=waited, was_doing=was_doing)
+            reply = Reply(channel, mode, key, trigger, job=next(self.jobs), waited=waited, was_doing=was_doing)
             with self.app.metrics.trace(mode) as trace:
                 try:
                     await self._run(reply)
@@ -295,29 +314,71 @@ class ReplyPipeline(Component):
             return age > PING_TOO_OLD_SEC
         return age > self.cfg.STALE_SEC
 
-    async def wait_quiet(self, key, max_wait=20.0):
+    async def wait_quiet(self, key, max_wait=20.0, debounce=None):
+        """Until they've stopped sending and typing. Sending a message ends typing, so a typing signal from before
+        their last message doesn't count."""
+        debounce = self.cfg.DEBOUNCE_SEC if debounce is None else debounce
         start = time.monotonic()
         while time.monotonic() - start < max_wait:
             now = time.monotonic()
-            typed = now - self.state.last_typing.get(key, NEVER) >= TYPING_SETTLE
-            if now - self.state.last_msg_time.get(key, NEVER) >= self.cfg.DEBOUNCE_SEC and typed:
+            typing_at = self.state.last_typing.get(key, NEVER)
+            sent_at = self.state.last_msg_time.get(key, NEVER)
+            typed = typing_at <= sent_at or now - typing_at >= TYPING_SETTLE
+            if now - sent_at >= debounce and typed:
                 return
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.25)
+
+    def _pace(self, reply):
+        """How quick she is this time: 1 is her usual, lower is quicker. In a live back-and-forth she often answers
+        fast, like someone with the chat already open; out of the blue only now and then. Never right after she was
+        busy and only just looked."""
+        chance = float(self.cfg.QUICK_REPLY_CHANCE)
+        if reply.waited or chance <= 0 or reply.trigger is None:
+            return 1.0
+        cid, now = reply.channel.id, time.monotonic()
+        last = self.app.sender.last_at.get(cid, NEVER)
+        live = self.app.addressing.is_engaged(cid, reply.trigger.author.id) or now - last < LIVE_SEC
+        if random.random() < (chance if live else chance * COLD_SHARE):
+            return random.uniform(*QUICK_PACE)
+        return 1.0
 
     async def _settle(self, reply):
         key = reply.key
+        pace = self._pace(reply)
+        debounce = self.cfg.DEBOUNCE_SEC * (QUICK_DEBOUNCE if pace < 1 else 1)
         if key is not None:
-            await self.wait_quiet(key)
+            await self.wait_quiet(key, debounce=debounce)
             reply.trigger = self.state.waiting.get(key, reply.trigger)
         delay = random.uniform(*self.cfg.READ_DELAY) + min(len(reply.trigger.content) / self.cfg.READ_CPS, 6)
-        if reply.mode != "direct" and not reply.boss and random.random() < self.cfg.DISTRACTED_CHANCE:
+        delay *= pace
+        if pace < 1:
+            log.debug("[%s] a quick one (x%.2f)", reply.tag, pace)
+        elif reply.mode != "direct" and not reply.boss and random.random() < self.cfg.DISTRACTED_CHANCE:
             delay += random.uniform(*self.cfg.DISTRACTED_DELAY)
+        ready = self.app.tasks.spawn(self._get_ready(reply), name=f"ready-{reply.job}")
         await asyncio.sleep(delay)
         if key is not None:
-            await self.wait_quiet(key, max_wait=10)
+            await self.wait_quiet(key, max_wait=10, debounce=debounce)
             reply.trigger = self.state.waiting.pop(key, reply.trigger)
             reply.took_key = True
+        if ready.done() or getattr(reply.trigger, "id", None) != reply.ready_for:
+            log.debug("[%s] got ready early: %s", reply.tag, "done" if ready.done() else "for an older message")
         return True
+
+    async def _get_ready(self, reply):
+        """While she's "reading", the slow parts start: the chat is fetched (and images looked at), and her plan
+        for it is worked out, so it's mostly done by the time she'd start writing. If they say more meanwhile, it's
+        done again for the new message, nothing is reused that doesn't fit."""
+        trigger = reply.trigger
+        reply.ready_for = getattr(trigger, "id", None)
+        try:
+            early = Reply(reply.channel, reply.mode, reply.key, trigger, job=reply.job)
+            if not await self._read(early, quiet=True):
+                return
+            if reply.trigger is trigger and early.target is not None:
+                await self._think(early)
+        except Exception:
+            log.debug("[%s] getting ready early didn't work, it's done the normal way", reply.tag, exc_info=True)
 
     async def _compose(self, reply):
         reply.typing_since = time.monotonic()
@@ -331,17 +392,17 @@ class ReplyPipeline(Component):
             if reply.extras_for != reply.target.id and not await self._plan(reply):
                 return False
             if self._gone_quiet(reply):
-                log.info("[%s] %s, not answering %s", reply.mode, self.app.away.state(reply.here), reply.target.author)
+                log.info("[%s] %s, not answering %s", reply.tag, self.app.away.state(reply.here), reply.target.author)
                 return reply.stop("away")
             await self._write(reply)
             if attempt == 0 and reply.key is not None and reply.key in self.state.waiting:
                 reply.trigger = self.state.waiting.pop(reply.key)
-                log.info("[%s] %s said more, re-reading", reply.mode, reply.trigger.author)
+                log.info("[%s] %s said more, re-reading", reply.tag, reply.trigger.author)
                 continue
             break
         return True
 
-    async def _read(self, reply):
+    async def _read(self, reply, quiet=False):
         reply.ctx = await self.app.context.build(reply.channel, reply.mode, reply.trigger)
         if not reply.ctx.turns:
             return reply.stop("nothing to answer")
@@ -350,10 +411,15 @@ class ReplyPipeline(Component):
         reply.pieces = addressing.pieces_of(reply.burst)
         reply.said = addressing.burst_text(reply.burst)
         reply.to_her = reply.mode == "dm" or any(addressing.talks_to_her(m) for m in reply.burst)
-        if len(reply.burst) > 1:
+        if self.cfg.MEMORY and not quiet:
+            context = "\n".join(self.messages.text(m) for m in list(reply.ctx.msgs)[-6:])
+            reply.recall = self.app.tasks.spawn(
+                self.memory.prefetch(reply.target.author, context), name=f"recall-{reply.job}"
+            )
+        if len(reply.burst) > 1 and not quiet:
             log.info(
                 "[%s] answering %d messages from %s together: %r",
-                reply.mode,
+                reply.tag,
                 len(reply.burst),
                 reply.target.author,
                 reply.said[:120],
@@ -384,7 +450,7 @@ class ReplyPipeline(Component):
     async def _leave_it(self, reply):
         target = reply.target
         log.info(
-            "[%s] not replying to %s: it doesn't need a reply (%r)", reply.mode, target.author, clean(target.content)
+            "[%s] not replying to %s: it doesn't need a reply (%r)", reply.tag, target.author, clean(target.content)
         )
         if reply.mode == "direct":
             self.app.addressing.engage(reply.channel.id, target.author.id)
@@ -407,7 +473,7 @@ class ReplyPipeline(Component):
             return False
         if reply.mode == "direct":
             self.app.addressing.engage(reply.channel.id, target.author.id)
-        log.info("[%s] reacted %s to %s: %r", reply.mode, emoji, target.author, target.content)
+        log.info("[%s] reacted %s to %s: %r", reply.tag, emoji, target.author, target.content)
         await self.app.relay.post(
             f"**reacted instead of replying** {emoji}\n**{target.author.display_name}:** "
             f"{cut(target.clean_content, 300)}\n[Jump to message]({target.jump_url})"
@@ -441,7 +507,7 @@ class ReplyPipeline(Component):
         target, channel = reply.target, reply.channel
         reply.thought = await self._think(reply)
         if reply.direct and self.app.feelings.leaves_on_read(target.author, reply.thought.reply_type):
-            log.info("[%s] she doesn't like %s much, leaving it on read", reply.mode, target.author)
+            log.info("[%s] she doesn't like %s much, leaving it on read", reply.tag, target.author)
             Metrics.event("left on read")
             return reply.stop("left on read")
         if (
@@ -471,7 +537,7 @@ class ReplyPipeline(Component):
                 f"chat would, so react to it or add something, don't answer it as if it was for you, and don't "
                 f"repeat it."
             )
-            log.info("[%s] chiming in on %s's message to someone else", reply.mode, target.author)
+            log.info("[%s] chiming in on %s's message to someone else", reply.tag, target.author)
         self._human_ask(reply)
         self._split_topics(reply, chiming)
         reply.long = self._long(reply, chiming)
@@ -491,10 +557,10 @@ class ReplyPipeline(Component):
             if random.random() < self._brush_off_chance(reply):
                 reply.extras.append(BRUSH_OFF_NOTE)
                 Metrics.event("brushed off")
-                log.info("[%s] that's a big ask, she brushes it off", reply.mode)
+                log.info("[%s] that's a big ask, she brushes it off", reply.tag)
             else:
                 reply.extras.append(GIST_NOTE.format(gist=f" (like: {gist})" if gist else ""))
-                log.info("[%s] that's a big ask, she just gives the gist", reply.mode)
+                log.info("[%s] that's a big ask, she just gives the gist", reply.tag)
         elif thought.ask == "favor" or thought.actions:
             reply.extras.append(FAVOR_NOTE)
 
@@ -524,10 +590,10 @@ class ReplyPipeline(Component):
             return False
         now = time.monotonic()
         if now - self.long_at.get(reply.channel.id, NEVER) < self.cfg.LONG_REPLY_COOLDOWN_MIN * 60:
-            log.info("[%s] it could use a longer reply, but she wrote one here not long ago", reply.mode)
+            log.info("[%s] it could use a longer reply, but she wrote one here not long ago", reply.tag)
             return False
         self.long_at[reply.channel.id] = now
-        log.info("[%s] giving this one a longer reply", reply.mode)
+        log.info("[%s] giving this one a longer reply", reply.tag)
         Metrics.event("longer reply")
         return True
 
@@ -548,11 +614,13 @@ class ReplyPipeline(Component):
             f"a short line each, or one line that covers two if that's more natural, in whatever order fits. Use "
             f"your own words, never repeat theirs back."
         )
-        log.info("[%s] %s asked %d different things", reply.mode, reply.target.author, len(reply.things))
+        log.info("[%s] %s asked %d different things", reply.tag, reply.target.author, len(reply.things))
 
     async def _write(self, reply):
         ctx, target, mode = reply.ctx, reply.target, reply.mode
-        if self.cfg.MEMORY:
+        if reply.recall is not None:
+            await reply.recall
+        elif self.cfg.MEMORY:
             await self.memory.prefetch(target.author, "\n".join(self.messages.text(m) for m in list(ctx.msgs)[-6:]))
         situation = self.app.situation
         await self.app.ages.settled(target.author)
@@ -565,7 +633,12 @@ class ReplyPipeline(Component):
         reply.notes = situation.notes(mode, reply.channel, target, ctx.msgs, reply.extras, ctx.around, reply.burst)
         if self.cfg.SHOW_NOTES:
             log.info("for %s:\n%s", target.author, reply.notes)
-        reply.text = await self.llm.generate(self.llm.prompt(ctx.turns, reply.persona, reply.notes))
+        out = await self.llm.generate(self.llm.prompt(ctx.turns, reply.persona, reply.notes), raw=True)
+        reply.text = out.get("content", "") if isinstance(out, dict) else str(out or "")
+        if stopped_at_limit(out, self.cfg.MAX_TOKENS):
+            log.info("[%s] her reply ran into MAX_TOKENS, leaving off the unfinished end", reply.tag)
+            Metrics.event("reply out of room")
+            reply.text = drop_unfinished(reply.text)
 
     async def _polish(self, reply):
         ctx, drafts, channel_id = reply.ctx, self.app.drafts, reply.channel.id
@@ -580,28 +653,29 @@ class ReplyPipeline(Component):
                 self._asked_directly(reply),
                 channel=reply.channel,
                 minors=reply.minors,
+                said=reply.said,
             )
             if reply.lines
             else None
         )
         if problem:
-            log.info("[%s] reply looked %r, trying again: %s", reply.mode, problem, " | ".join(reply.lines))
+            log.info("[%s] reply looked %r, trying again: %s", reply.tag, problem, " | ".join(reply.lines))
             Metrics.event(f"redo {problem}")
-            reply.lines = await self._retry(reply, FIXES.get(problem, FIXES["robotic"]), seen)
+            reply.lines = await self._retry(reply, self._fix_for(problem, reply), seen)
             if not reply.lines:
-                log.info("[%s] still no good reply, staying quiet", reply.mode)
+                log.info("[%s] still no good reply, staying quiet", reply.tag)
                 if reply.mode != "ambient" and self.cfg.REACTIONS:
                     await self.app.reactions.react(reply.trigger)
                 return reply.stop("bad draft")
         if reply.lines and reply.things and too_few_answers(len(reply.lines), len(reply.things)):
-            log.info("[%s] %d lines for %d questions, trying again", reply.mode, len(reply.lines), len(reply.things))
+            log.info("[%s] %d lines for %d questions, trying again", reply.tag, len(reply.lines), len(reply.things))
             Metrics.event("answer all retry")
             reply.lines = await self.app.review.answer_all(
                 ctx.turns, reply.persona, reply.notes, reply.things, reply.channel, ctx.others, seen, reply.lines
             )
         thought = reply.thought
         if reply.lines and thought.wants_answer and not answers_it(reply.lines, thought.brief, thought.checked):
-            log.info("[%s] reply didn't answer, trying again: %s", reply.mode, " | ".join(reply.lines))
+            log.info("[%s] reply didn't answer, trying again: %s", reply.tag, " | ".join(reply.lines))
             Metrics.event("answer retry")
             reply.lines = await self.app.review.make_her_answer(
                 ctx.turns,
@@ -614,18 +688,29 @@ class ReplyPipeline(Component):
                 ctx.others,
                 seen,
                 reply.lines,
-                reply.mode,
+                reply.tag,
             )
         if reply.lines and await self.app.policy.judged_unsafe(reply.lines, reply.channel):
-            log.info("[%s] the safety check turned it down, trying again: %s", reply.mode, " | ".join(reply.lines))
+            log.info("[%s] the safety check turned it down, trying again: %s", reply.tag, " | ".join(reply.lines))
             Metrics.event("redo not safe")
             reply.lines = await self._retry(reply, FIXES["not safe"], seen)
             if not reply.lines or await self.app.policy.judged_unsafe(reply.lines, reply.channel):
-                log.info("[%s] still not safe, staying quiet", reply.mode)
+                log.info("[%s] still not safe, staying quiet", reply.tag)
                 if reply.mode != "ambient" and self.cfg.REACTIONS:
                     await self.app.reactions.react(reply.trigger)
                 return reply.stop("not safe")
         return bool(reply.lines) or reply.stop("empty draft")
+
+    def _fix_for(self, problem, reply):
+        if problem == "out of character":
+            return self.app.identity.fix()
+        if problem == "off topic":
+            name = self.messages.call(reply.target.author)
+            return (
+                f'That doesn\'t fit: {name} said "{cut(reply.said, 200)}" and you just said hi out of nowhere. '
+                f"Reply to what {name} actually said."
+            )
+        return FIXES.get(problem, FIXES["robotic"])
 
     def _asked_directly(self, reply):
         return voice.asked_about_her(reply.said, reply.ctx.others)
@@ -639,7 +724,7 @@ class ReplyPipeline(Component):
         )
         lines = drafts.tidy(text, reply.channel.id, reply.ctx.others)
         if lines and drafts.problem(
-            lines, seen, False, reply.adult, direct, channel=reply.channel, minors=reply.minors
+            lines, seen, False, reply.adult, direct, channel=reply.channel, minors=reply.minors, said=reply.said
         ):
             copied = set(drafts.echoed(lines, seen))
             kept = [
@@ -651,9 +736,12 @@ class ReplyPipeline(Component):
                 and not LIST_LINE.match(ln)
                 and (reply.adult or not explicit(ln))
                 and not self.app.policy.breaks(ln, reply.channel, reply.minors)
+                and not self.app.identity.wrong(ln)
                 and not (direct and voice.opens_with_she(ln))
             ]
             lines = kept if sum(map(len, kept)) >= 0.5 * sum(map(len, lines)) else []
+            if lines and drafts.problem(lines, seen, said=reply.said) == "off topic":
+                lines = []
         return lines
 
     async def _aim(self, reply):
@@ -664,7 +752,10 @@ class ReplyPipeline(Component):
         if reply.things:
             reply.anchor = reply.things[-1].msg
         reply.addr = reply.anchor
+        reply.owned = {m.id: m.author.id for m in [*reply.burst, reply.target]}
+        log.debug("[%s] answering %s", reply.tag, ", ".join(str(i) for i in reply.owned))
         if reply.mode == "dm":
+            await self._review(reply)
             return True
         reply.people = self.messages.people_in(reply.ctx.everything)
         verdict, other, mixed = await self._review(reply)
@@ -674,7 +765,7 @@ class ReplyPipeline(Component):
                 await self.app.reactions.react(reply.anchor)
             return reply.stop("mixed up")
         if verdict == "other" and not await self._redirect(reply, other):
-            return reply.stop("already answered")
+            return reply.stop("wrong message")
         if verdict == "general":
             reply.addr = reply.anchor if self._owed(reply) else None
         if self._too_late(reply):
@@ -686,8 +777,9 @@ class ReplyPipeline(Component):
 
     async def _review(self, reply):
         review, ctx, anchor = self.app.review, reply.ctx, reply.anchor
-        verdict, other, mixed = await review.check(reply.lines, anchor, ctx.msgs, ctx.around)
-        if not (self._owed(reply) and (mixed or verdict in ("other", "general"))):
+        owed = self._owed(reply) or reply.mode == "dm"
+        verdict, other, mixed = await review.check(reply.lines, anchor, ctx.msgs, ctx.around, always=owed)
+        if not (owed and (mixed or verdict in ("other", "general"))):
             return verdict, other, mixed
         name = self.messages.call(anchor.author)
         why = "mixes up who said what" if mixed else verdict
@@ -708,7 +800,7 @@ class ReplyPipeline(Component):
         )
         if not retry:
             return verdict, other, mixed
-        v2, o2, m2 = await review.check(retry, anchor, ctx.msgs, ctx.around)
+        v2, o2, m2 = await review.check(retry, anchor, ctx.msgs, ctx.around, always=owed)
         if not m2 and (v2 in (None, "fits") or mixed):
             log.info("rewritten for %s: %s", name, " | ".join(retry))
             reply.lines, reply.things = retry, None
@@ -717,20 +809,27 @@ class ReplyPipeline(Component):
         return verdict, other, mixed
 
     async def _redirect(self, reply, other):
+        """Her reply fits a different message than the one she wrote it for. It never goes to that message: what she
+        wrote for one person isn't handed to someone else. Joining in by herself, it goes out replying to nobody. If
+        someone was owed an answer, their message gets one fresh try of its own."""
         anchor, owed = reply.anchor, self._owed(reply)
         other_name = self.messages.call(other.author)
-        if self.app.review.already_answered(other):
-            log.info("that answers %s's message, which she already answered: not sending it twice", other_name)
-            if owed and self.requeue(reply.channel, anchor):
-                log.info("%s still gets an answer, next", self.messages.call(anchor.author))
-            elif owed and self.cfg.REACTIONS:
-                await self.app.reactions.react(anchor)
-            return False
-        log.info("it answers %s's message, so it goes there", other_name)
-        reply.addr = other
-        if owed and other.author.id != anchor.author.id and self.requeue(reply.channel, anchor):
-            log.info("%s still gets an answer, next", self.messages.call(anchor.author))
-        return True
+        if not owed and not self.app.review.already_answered(other):
+            log.info("[%s] it fits %s's message better, so it goes out replying to nobody", reply.tag, other_name)
+            reply.addr = None
+            return True
+        log.info(
+            "[%s] it answers %s's message, not %s's: not sending it",
+            reply.tag,
+            other_name,
+            self.messages.call(anchor.author),
+        )
+        Metrics.event("wrong target held back")
+        if owed and self.requeue(reply.channel, anchor):
+            log.info("[%s] %s's message gets a fresh try", reply.tag, self.messages.call(anchor.author))
+        elif owed and self.cfg.REACTIONS:
+            await self.app.reactions.react(anchor)
+        return False
 
     def _after(self, reply):
         to_id = reply.addr.author.id if reply.addr is not None else None
@@ -742,7 +841,7 @@ class ReplyPipeline(Component):
         _, after = self._after(reply)
         if convo.too_late(after, self.me.id, self.cfg.LATE_GAP):
             log.info(
-                "[%s] too much came in while she was typing, letting it go: %s", reply.mode, " | ".join(reply.lines)
+                "[%s] too much came in while she was typing, letting it go: %s", reply.tag, " | ".join(reply.lines)
             )
             return True
         return False
@@ -752,7 +851,7 @@ class ReplyPipeline(Component):
         if here is not None and (
             self.app.away.asleep(here) or (self.app.away.is_quiet(here) and (reply.was_quiet or not reply.boss))
         ):
-            log.info("[%s] went %s while typing, not sending", reply.mode, self.app.away.state(here))
+            log.info("[%s] went %s while typing, not sending", reply.tag, self.app.away.state(here))
             return None
         if reply.mode == "dm":
             reply.delivery = convo.Delivery("plain", reply.anchor, reply.anchor.author)
@@ -802,11 +901,12 @@ class ReplyPipeline(Component):
         else:
             answers = [reply.lines]
         to_id, after = self._after(reply)
+        crowded = any(a not in (self.me.id, to_id) for a in after)
         reply.layout = shape.pick(
             answers,
             serious=reply.serious,
-            crowded=any(a not in (self.me.id, to_id) for a in after),
-            can_thread=bool(groups) and len(groups) >= 2,
+            crowded=crowded,
+            can_thread=bool(groups) and len(groups) >= 2 and crowded,
             longer=reply.long,
         )
         if reply.layout == shape.THREADED and not groups:
@@ -814,10 +914,10 @@ class ReplyPipeline(Component):
         if reply.layout == shape.THREADED:
             reply.parts, reply.targets = shape.threaded(groups, random)
         else:
-            spaced = len(answers) >= 2 and random.random() < BLANK_LINES_CHANCE
+            spaced = shape.paragraphs(answers, reply.long or reply.serious) and random.random() < SPACED_CHANCE
             reply.parts = answers if spaced else [reply.lines]
         if reply.layout != shape.QUICK:
-            log.info("[%s] sending it as %s", reply.mode, reply.layout)
+            log.info("[%s] sending it as %s", reply.tag, reply.layout)
 
     async def _deliver(self, reply):
         await self._lay_out(reply)
@@ -832,6 +932,8 @@ class ReplyPipeline(Component):
             layout=reply.layout,
             targets=reply.targets,
             longer=reply.long,
+            owned=reply.owned,
+            job=reply.job,
         )
         if not reply.sent or reply.delivery is None:
             return reply.stop("not sent")
@@ -860,7 +962,7 @@ class ReplyPipeline(Component):
         where = "dm" if mode == "dm" else f"#{channel}"
         tag = (" [gif]" if extra.startswith("http") else f" [{extra}]") if extra else ""
         how = "" if mode == "dm" else f" ({delivery.describe(self.messages.call)})"
-        log.info("[%s] %s -> %s%s: %s%s", mode, where, to_user or "the chat", how, " | ".join(shown), tag)
+        log.info("[%s] %s -> %s%s: %s%s", reply.tag, where, to_user or "the chat", how, " | ".join(shown), tag)
         their_msg = delivery.msg or trigger
         await self.app.relay.interaction(
             mode, channel, to_user or trigger.author, their_msg, shown, extra, len(reply.ctx.turns)

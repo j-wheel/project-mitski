@@ -150,7 +150,7 @@ class WebSearch(Component):
             f"her reply, with the specific names, numbers and dates. Only the facts themselves, don't mention {her} or "
             f"what she should say. If they don't actually answer it, found is false.",
             SEARCH_ANSWER,
-            160,
+            320,
         )
         answer = cut(str((summary or {}).get("answer") or "").strip(), 400)
         await self.app.relay.post(

@@ -19,26 +19,60 @@ a throwaway account and don't be surprised if it gets banned.
 - Works out who a message is for and replies, pings or just sends a message so it's clear who she's talking to
 - Answers several messages from one person together: each question when they ask a few different things, and one
   reaction to the whole thing when it's a few remarks in a row, without repeating their words back
-- Lays a reply out like a person would: a few quick messages, one longer message, or a reply to each question
+- Lays a reply out like a person would: a few quick messages (never more than 4 in a row, extra short lines go
+  together in one message), one longer message (blank lines between parts only when it's long), or, only when
+  other people are talking too, a reply to each question
+- Never answers someone with a reply that was meant for someone else. Each reply is its own numbered job (`#12` in
+  the log) tied to the message or messages it was written for, and it can only ever reply to or ping those, however
+  long she was busy and however many times it got rewritten. If the check says a draft really answers someone else's
+  message, it isn't sent there: it's dropped and the person she owed an answer gets one fresh try (joining in by
+  herself, it just goes out without replying to anyone). The sender refuses a wrong target as a last line too
+- Doesn't send replies that come out of nowhere: a draft that's only a greeting ("hii everyone") when they asked or
+  said something real is redone, and every reply she owes someone, one on one and in dms too, gets the same quick
+  "does this fit their message" check as in a busy chat (`ADDRESSEE_CHECK`), with one rewrite if it doesn't
+- Never gets herself wrong: `HER_AGE`, `HER_GENDER`, `HER_FROM` and `HER_CITY` go into every prompt as facts that
+  don't change, a draft that says another age, gender or country is redone, a line that still does is never sent,
+  and anything she remembers saying about herself that contradicts them is forgotten
 - Keeps it short most of the time, but now and then writes a longer reply when the moment calls for it: explaining
   something properly, giving advice, telling a story, or being there for someone (`LONG_REPLIES`). Never while
   she's busy, and not twice in a row in the same channel
 - Lets tiny follow-ups that close a chat ("lol", "ok") go without replying, unless she asked them something
-- Remembers people between conversations (facts, nicknames, what they play and listen to, past chats)
+- Remembers people between conversations (facts, nicknames, what they play and listen to, past chats), and reads the
+  discord profile of people she talks to once a day (bio, pronouns, connected accounts, `PROFILE_READ`) so she has a
+  picture of who they are even before they've told her much
+- Remembers servers too (`SERVER_NOTES`): every so often she takes stock of a server's channels and what's being said,
+  and keeps a short list of what it's about, what people there are into, running jokes and events
+  (`data/servers.json`)
+- Googles what people are into when she doesn't know it (a band, a game, a show), once, in the background, and
+  remembers what it is, so next time it comes up she knows what they mean (`LOOK_UP_INTERESTS`, `data/knowledge.json`)
 - Has feelings about people that grow or sour from how they treat her (how much she likes and trusts them, chemistry,
   and being hurt), and her own mood that shifts through the day. Both change how she talks and acts (see
   [Her feelings](#her-feelings))
 - Thinks before answering questions: web search, weather, time, math, scrolling back through the chat. Like anyone,
   she sometimes doesn't bother looking something up and just says she doesn't know (`SKIP_LOOKUP_CHANCE`)
+- Reads people before she replies, like a friend who knows them would: what they actually want from her (to vent,
+  to get hyped, to tease and be teased back, to make plans...), how they seem, what's under it if anything, what
+  she's going for in her reply, and now and then a question she'd genuinely want to ask. It goes by what she
+  remembers about them, how she feels about them and her own mood, and shows in the log as
+  `anna: small_talk, to her, excited | wants: ... | going for: ...`
 - Handles asks like a person in a chat, not a helper: a big ask (a whole recipe, a guide, homework, code) gets
   brushed off her way or the gist in a line, never the full thing (`BRUSH_OFF_CHANCE`), and a favour gets a casual
   "bet", not a task confirmation. Drafts that slip into assistant talk ("i will remind him...", "here's a recipe",
   numbered steps, "hope this helps") are redone in her own voice
-- Looks at images, gifs, stickers and short videos people send
+- Looks at images, gifs, stickers and short videos people send (`VISION_TOKENS` long, a closer look twice that; a
+  description that runs out keeps its whole sentences instead of stopping mid-word)
+- Never has her input cut somewhere random: replies that hit `MAX_TOKENS` lose only their unfinished end, a helper
+  answer that runs out of room is asked again with twice the room, and a prompt too big for the model's context (read
+  from llama-server at startup, with a warning if it's small) leaves out its oldest messages, never her persona or
+  notes. Memory notes size the chat they read to fit
 - Uses the server's emojis and stickers, reacts to messages, sends gifs (giphy)
 - Types like a person: lowercase, slang, a few quick messages in a row, typing delays, and now and then a small typo
   (a neighbouring key, two letters swapped, a missed letter) that she sometimes fixes a few seconds later, by editing
   the message or with a quick "*word"
+- Isn't always equally slow: in a live back-and-forth she often answers quickly, with a fraction of her usual read
+  delay and wait, and now and then out of the blue too (`QUICK_REPLY_CHANCE`). While she "reads", the chat is
+  already being fetched and her plan worked out, so the model work mostly hides behind the delay a person would
+  take anyway. She stops waiting as soon as someone has sent their message, not seconds after they stopped typing
 - Joins voice chats now and then and plays keyboard sounds while she types (she never talks in vc)
 - Picks up when someone calls her in dms or a group dm (`VOICE_CALLS`), after letting it ring a few seconds. In a
   call her keyboard sounds play whenever she's typing, she hangs up when the call ends, when everyone else has left,
@@ -56,9 +90,12 @@ a throwaway account and don't be surprised if it gets banned.
   now and then a short trip, different every day (see [Her routine](#her-routine)). While she's busy she only looks
   at her phone now and then, so dms and pings can wait a while, dms the least
 - An owner account she listens to, with standing orders, quiet mode, status changes and dms
-- Writes herself a new custom status and emoji every hour (`STATUS_AUTO`, `STATUS_AUTO_MIN`), from her persona, her
-  mood and what she's up to, within discord's 128 characters. If her model's attempt isn't usable the old one stays
-  and she tries again in 10 minutes. Telling her to clear her status removes it until her next new one
+- Writes herself a new custom status and emoji every hour (`STATUS_AUTO`, `STATUS_AUTO_MIN`), within discord's 128
+  characters. Each one is a different kind of thing (a random thought, a hot take, a dumb joke, a song stuck in her
+  head, a craving, now and then something about her day), never the same kind as her last few. One that glues two
+  things together ("x + y rn"), has a clock time, reuses a phrase from her last 12 or names someone she knows is
+  thrown out and she tries another idea, up to 3 times, then keeps the old one and tries again in 10 minutes.
+  Telling her to clear her status removes it until her next new one
 - Channels, ignored users and sleep settings can be changed from discord without restarting
 - Her owner can keep people out of her memory with `MEMORY_OPTOUT`
 
@@ -120,6 +157,8 @@ The generated config is deliberately generic. These are the options that decide 
   sometimes writes a longer one when it's called for.
 - `BRUSH_OFF_CHANCE` and `SKIP_LOOKUP_CHANCE`: how often she brushes off a big ask instead of giving the gist, and
   how often she doesn't bother googling something she doesn't know.
+- `HER_AGE`, `HER_GENDER`, `HER_FROM`, `HER_CITY`: the facts about her that never change. Keep them matching your
+  `PERSONA`; anything she says or remembers that contradicts them is redone or dropped.
 - `IDENTITY_NOTE`: the rules she always keeps (no assistant talk, stays in character, will lie when someone
   sincerely asks if she's a bot). Leave it empty to use the built-in one, which calls her by the discord account's name.
 - `ACTIVITY_TYPE` and `ACTIVITY_TEXT`: what her discord status says she's doing.
@@ -328,7 +367,7 @@ admit      is she allowed to answer (channel, quiet/asleep, too old)
 settle     wait for them to stop typing, read delay
 compose    build the context, plan (search, tools, owner requests, reminders), write a draft
 polish     clean the draft, keep it in her own voice, retry if it echoes people or sounds like an assistant, check it answers the question
-aim        check who the draft is really for, rewrite or redirect it, drop it if the chat moved on
+aim        check who the draft is really for, rewrite it, drop it if it fits someone else or the chat moved on
 deliver    reply, ping or plain message, typed out line by line ("is typing" only shows here, never while the model works)
 aftercare  memory, reactions, dm follow-ups, the log channel
 ```

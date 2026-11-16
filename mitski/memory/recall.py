@@ -136,7 +136,8 @@ class RecallMixin:
                 f"there's nothing you remember with them."
             )
             feeling = feelings.regard_note(user, d, name) if d and feelings and feelings.stands_out(d, user.id) else ""
-            return f"{first} {feeling}".strip()
+            profile = self.profile_line(d, name) if d and full else ""
+            return f"{first} {profile} {feeling}".strip()
         now = time.time()
         today = dt.date.today()
         s = d["slots"]
@@ -185,6 +186,9 @@ class RecallMixin:
         about = self.slot_summary(d)
         if about:
             out.append(f"What you know about {call}: {about}.")
+        profile = self.profile_line(d, call) if full else ""
+        if profile:
+            out.append(profile)
         for key, slot in s.items():
             if (
                 key in SLOT_LABELS
@@ -277,7 +281,7 @@ class RecallMixin:
         if not self.enabled:
             return ""
         lines, minors = [], []
-        for u in users[:4]:
+        for u in users[:6]:
             d = self.get(u.id)
             if not d:
                 continue
@@ -295,12 +299,12 @@ class RecallMixin:
             bits = [b for b in [self.slot_summary(d, public=True)] if b]
             bits += [
                 f["text"] + (" (heard, not sure)" if unsure(f) else "")
-                for f in self.pick_facts(d, context, 2, public=True)
+                for f in self.pick_facts(d, context, 3, public=True)
             ]
             games = activity.games_summary(d.get("activity") or {}, n=1)
             if games:
                 bits.append(games)
-            if (bits or label != call) and len(lines) < 3:
+            if (bits or label != call) and len(lines) < 4:
                 lines.append(label + (": " + "; ".join(bits) if bits else ""))
         out = ("Other people in this chat you know: " + " | ".join(lines) + ".") if lines else ""
         if minors:

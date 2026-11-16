@@ -7,6 +7,7 @@ import time
 from mitski.core import logs
 from mitski.core.text import cut
 from mitski.llm import gpu
+from mitski.llm.client import tokens_guess
 from mitski.llm.helper import parse_json
 from mitski.memory import activity
 from mitski.memory.dates import DAY, plan_date, said_ago
@@ -54,10 +55,15 @@ FEELING_ITEM = {
     "required": ["kind", "intensity", "evidence", "why"],
     "additionalProperties": False,
 }
+LOOK_UP = {"type": "array", "maxItems": 2, "items": {"type": "string", "maxLength": 60}}
 NOTES_SCHEMA = {
     **SCHEMA,
-    "properties": {**SCHEMA["properties"], "feelings": {"type": "array", "maxItems": 5, "items": FEELING_ITEM}},
-    "required": [*SCHEMA["required"], "feelings"],
+    "properties": {
+        **SCHEMA["properties"],
+        "feelings": {"type": "array", "maxItems": 5, "items": FEELING_ITEM},
+        "look_up": LOOK_UP,
+    },
+    "required": [*SCHEMA["required"], "feelings", "look_up"],
 }
 FEELING_KINDS = "\n".join(f"- {kind}: {meaning}" for kind, (meaning, _, _) in KINDS.items())
 
@@ -128,6 +134,9 @@ class NotesMixin:
             lines.append(f"set by hand, always true: {d['pinned']}")
         if d.get("bond"):
             lines.append(f"bond: {d['bond']}")
+        profile = self.profile_line(d, "their")
+        if profile:
+            lines.append(profile.replace("their's", "their", 1) + " (their profile, not something they said)")
         return "\n".join(lines) or "(nothing yet)"
 
     def _instructions(self, her):
@@ -181,6 +190,7 @@ class NotesMixin:
                     "why": "teased you back about being older",
                 }
             ],
+            "look_up": ["deadlock (game)"],
         }
         return f"""You keep {her}'s memory of the people she talks to on discord. You get what she already knows about one person and their newest messages. Answer with JSON only, saying what's new or changed about that person.
 
@@ -208,7 +218,9 @@ feelings: how the person treated {her} in the new messages, so she can feel abou
 {FEELING_KINDS}
 intensity: 1 = a small thing, 2 = clear, 3 = a big deal. why: a few words to {her} about what they did ("called you annoying", "hyped your cs clip", "loves laufey like you do"). evidence: their exact words, as always. Tell banter from meanness: friends roasting each other with "lol", emojis and both laughing is friendly_teasing, not insulted_her. Sarcasm isn't a compliment, and being nice once isn't genuine_affection. shared_interest only when they like something {her} likes too (her own facts and what she said show what she likes). Most messages have none of this: an empty list is normal.
 
-Only write down lasting things worth knowing next week. Not what they just did in this chat ("said hi", "used 'meow'", "sent a gif", "asked about x"), not emojis, and not how they feel right this moment ("is tired", "is frustrated"). Skip jokes, sarcasm and obvious trolling. Don't repeat what's already known. Empty lists are fine, most messages have nothing new.
+look_up: at most 2 specific things the person is into or talking about that {her} might not know, worth a quick google so she understands them next time: a band or artist, a game, a show, a place, a niche hobby ("laufey (singer)", "deadlock (game)"). Name it the way you'd google it, with what it is in brackets. Not everyday things everyone knows, not people from the chat. Usually none.
+
+Only write down lasting things worth knowing next week. Not what they just did in this chat ("said hi", "used 'meow'", "sent a gif", "asked about x"), not emojis, and not how they feel right this moment ("is tired", "is frustrated"). Skip jokes, sarcasm and obvious trolling. Don't repeat what's already known. Anything lasting they tell you about themselves (what they like, do, have, plan, who's in their life) is worth keeping, even small things: when in doubt, keep it. Empty lists are fine when there's really nothing.
 
 Example. Known about alex:
 age: 17
@@ -322,7 +334,12 @@ Answer:
                 to = f" (to {her})" if kind == "them" else f" (to {self.name_of(target)})" if target else ""
                 return f"{who}{to}: {cut(self.text_of(m), 400)}"
 
-            while len(new) > 1 and sum(len(line(m)) + 1 for m in new) > NOTES_CHAT_CHARS:
+            instructions = self._instructions(her)
+            limit = NOTES_CHAT_CHARS
+            if not self.app.helper.external:
+                fixed = tokens_guess(instructions + self._data_text(d, name, her, earlier, [], line))
+                limit = self.app.llm.room_chars(NOTES_TOKENS * 2 + self.app.helper.think_tokens + fixed, limit)
+            while len(new) > 1 and sum(len(line(m)) + 1 for m in new) > limit:
                 new = new[1:]
 
             def who(m):
@@ -333,7 +350,7 @@ Answer:
             where = f"#{channel.name}" if getattr(channel, "name", None) else "dms"
             took_part = any(m.author.id == me for m in new)
             answer = await self.app.helper.ask(
-                self._instructions(her),
+                instructions,
                 self._data_text(d, name, her, earlier, new, line, think=self.think_on),
                 NOTES_SCHEMA,
                 NOTES_TOKENS,
@@ -350,6 +367,9 @@ Answer:
                 feelings = getattr(self.app, "feelings", None)
                 if feelings is not None:
                     changes += feelings.appraise(user, d, data.get("feelings"), to_her)
+                knowledge = getattr(self.app, "knowledge", None)
+                if knowledge is not None:
+                    knowledge.want(data.get("look_up"), name)
                 self.fix_voice_of(d)
                 self.fix_own_voice()
             self._expire(d, changes)
@@ -512,6 +532,10 @@ Answer:
                 if source(f.get("evidence"), allow=("her",)) is None:
                     dropped.append(f"about her: {f.get('fact', '')}")
                     continue
+                identity = getattr(self.app, "identity", None)
+                if identity is not None and identity.wrong_fact(f.get("fact")):
+                    changes.append(f"✗ not saved about herself, it's wrong: {cut(str(f.get('fact', '')), 80)}")
+                    continue
                 self._add_fact(
                     self.own,
                     str(f.get("fact", "")),
@@ -612,6 +636,11 @@ Answer:
                 else ""
             )
             + (f"On discord: {act}\n" if act else "")
+            + (
+                f"{self.profile_line(d, name)} (their own profile, good for who they are)\n"
+                if d.get("discord_profile")
+                else ""
+            )
             + f"\nFacts:\n{facts or '(none)'}\n\nConversations (episodes):\n{episodes or '(none)'}\n"
             + (f"\nOLD (fold these into history): {', '.join('E' + str(e['id']) for e in fold)}\n" if fold else "")
             + (f"\nOld history: {d['history']}\n" if d.get("history") else "")
