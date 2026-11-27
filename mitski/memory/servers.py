@@ -1,7 +1,3 @@
-"""What she knows about each server she's in: what it's about, who hangs out there, running jokes, events, what
-people there are into. Her notes model reads the server's channels and a good stretch of what's said every so often
-and keeps a short list, so she talks like someone who's actually part of the place."""
-
 import time
 from collections import Counter
 
@@ -9,6 +5,7 @@ from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 from mitski.llm import gpu
 
 log = logs.get("servers")
@@ -48,13 +45,10 @@ class ServerNotes(Component):
         if not facts:
             return ""
         return (
-            f"What you know about {guild.name}, the server you're in: "
-            + "; ".join(f["text"].rstrip(".") for f in facts)
-            + "."
+            (say("memory.server_known", name=guild.name) + " ") + "; ".join(f["text"].rstrip(".") for f in facts) + "."
         )
 
     def heard_in(self, msg):
-        """Every so many messages in a server (and never more than once every few hours), she takes stock."""
         guild = getattr(msg, "guild", None)
         if not self.cfg.SERVER_NOTES or guild is None or guild.id in self.running:
             return
@@ -69,10 +63,10 @@ class ServerNotes(Component):
     def _about(self, guild):
         lines = [f"Server: {guild.name}"]
         if getattr(guild, "description", None):
-            lines.append(f"Its description: {cut(guild.description, 300)}")
+            lines.append(say("memory.server_description", description=cut(guild.description, 300)))
         count = getattr(guild, "member_count", None) or len(getattr(guild, "members", []) or [])
         if count:
-            lines.append(f"Members: about {count}")
+            lines.append(say("memory.server_members", count=count))
         channels = [c for c in getattr(guild, "channels", []) if getattr(c, "name", None) and hasattr(c, "topic")]
         listed = [
             f"#{c.name}" + (f" ({cut(c.topic, 100)})" if getattr(c, "topic", None) else "") for c in channels[:25]
@@ -101,16 +95,18 @@ class ServerNotes(Component):
             facts = self.facts(guild)
             known = "\n".join(f"{i}. {f['text']}" for i, f in enumerate(facts, 1)) or "(nothing yet)"
             out = await self.app.helper.ask_json(
-                "You keep notes about a discord server for someone who hangs out there, so she knows the place like "
-                "a regular does. Answer with JSON.",
-                f"{self._about(guild)}\n\nWhat she already knows about it:\n{known}\n\nRecent chat in "
-                f'#{getattr(channel, "name", "?")} ("you" is her):\n' + "\n".join(chat) + "\n\n"
-                "new_facts: up to 5 lasting things about the server itself that aren't known yet: what it's for, "
-                "what kind of group it is, what people there are into, running jokes, recurring events, rules or "
-                'customs, the vibe. Short, written to her ("people here mostly play cs2", "everyone roasts the '
-                'admin for his 2am streams"). Not facts about a single person (she keeps those separately), not '
-                "one-off chat, nothing about her being a bot. wrong: numbers of known things that turned out false "
-                "or out of date. Empty lists are fine.",
+                wording("memory.server_notes_system"),
+                (
+                    say(
+                        "memory.server_notes",
+                        about=self._about(guild),
+                        known=known,
+                        channel=getattr(channel, "name", "?"),
+                    )
+                    + "\n"
+                )
+                + "\n".join(chat)
+                + ("\n\n" + wording("memory.server_notes_task")),
                 SCHEMA,
                 500,
             )

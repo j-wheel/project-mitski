@@ -37,16 +37,6 @@ async def test_reminders_wait_while_the_server_is_quiet(world):
     assert len(world.app.reminders.items) == 1
 
 
-async def test_owner_wakes_her_up_and_gets_an_answer(world):
-    await world.app.sleep.go_away(world.guild, hours=2, bye=False)
-    await world.send(world.people["bob"], "mitski wake up")
-    assert world.sent_text() == []
-    world.replies.append("mm im up")
-    await world.send(world.owner, "mitski wake up")
-    assert not world.app.away.asleep(world.guild.id)
-    assert world.sent_text() == ["mm im up"]
-
-
 async def test_quiet_command_from_the_log_channel(world):
     log = FakeChannel(world.client, world.guild, "her-log")
     world.app.cfg.LOG_CHANNEL = log.id

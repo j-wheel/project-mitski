@@ -221,11 +221,6 @@ def is_the_artist(text, names):
 
 
 def to_you(text, names, pronouns=True, she_is_them=False):
-    """Stored memory about her, rewritten so "you" is her: "mitski's pc" -> "your pc".
-
-    she/her is only touched when it can't be anyone else: her name comes first and the other
-    person in the note goes by he or they. Otherwise it's left alone, a wrong guess is worse.
-    """
     key = _key(names)
     if not text or not key or is_the_artist(text, key):
         return text
@@ -241,16 +236,10 @@ def to_you(text, names, pronouns=True, she_is_them=False):
 
 
 def own_fact_to_you(text, names):
-    """Facts in her own list are always about her, so every she/her in them is hers."""
     return _swap_she(_swap_name(text, _key(names), "you", objects=True), "you")
 
 
 def to_first_person(line, names, she_too=False):
-    """A draft or a note of what to say, in her own voice: "mitski is tired" -> "i'm tired".
-
-    Leaves "call me mitski", "@mitski" and "i love mitski's new album" alone, and only changes
-    the name where she's the one doing something, because she can still be mentioned by name.
-    """
     key = _key(names)
     if not line or not key or is_the_artist(line, key) or _patterns(key)[4].search(line):
         return _swap_she(line, "i") if she_too and line else line
@@ -259,7 +248,6 @@ def to_first_person(line, names, she_too=False):
 
 
 def asked_about_her(said, other_names=()):
-    """They're asking her directly ("are u still here") and nobody else comes up in it."""
     if not said or not SECOND_PERSON.search(said) or THIRD_PERSON.search(said):
         return False
     words = set(re.findall(r"[\w.'-]+", said.lower()))

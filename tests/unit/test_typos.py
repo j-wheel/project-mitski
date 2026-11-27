@@ -6,7 +6,6 @@ from mitski.chat import typos
 
 
 def one_edit_apart(a, b):
-    """True if b is a with one letter changed, dropped, doubled, or two neighbours swapped."""
     if len(a) == len(b):
         diff = [i for i in range(len(a)) if a[i] != b[i]]
         return len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]])

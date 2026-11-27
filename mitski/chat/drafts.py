@@ -1,5 +1,6 @@
 import re
 
+from mitski.chat import guard
 from mitski.chat.patterns import (
     ANY_URL,
     CHANNEL_MENTION,
@@ -67,6 +68,7 @@ class DraftFilter(Component):
             line = re.sub(r"[ \t]+", " ", line).strip()
             line = re.sub(r"^(?:[,;]\s*|:\s+)(?=\w)", "", line)
             line = self._own_voice(line, own)
+            line = guard.calm(line)
             if self.cfg.STRIP_PERIODS and line.endswith(".") and not line.endswith(".."):
                 line = line[:-1].rstrip()
             for piece in [line] + stickers[:1]:
@@ -87,7 +89,6 @@ class DraftFilter(Component):
         return fixed
 
     def greeting(self, said):
-        """Whether what they said is only hellos ("mitski hiii", "hey / hows it going" isn't), so a hi back fits."""
         names = [re.escape(n) for n in self.messages.own_names() if n]
         own = re.compile(r"\b(?:" + "|".join(names) + r")\b", re.I) if names else None
         for part in said.split(" / "):
@@ -103,9 +104,38 @@ class DraftFilter(Component):
         blob = " " + " ".join(_norm(t) for t in theirs) + " "
         return [ln for ln in lines if len(_norm(ln)) >= 8 and (_norm(ln) in whole or f" {_norm(ln)} " in blob)]
 
-    def problem(self, lines, msgs, honest=False, adult=True, direct=False, channel=None, minors=False, said=None):
+    def repeated(self, lines, channel):
+        if channel is None:
+            return []
+        recent = list(self.state.recent_said.get(channel.id, ()))[-8:]
+        return [ln for ln in lines if guard.repeats(ln, recent)]
+
+    def problem(
+        self,
+        lines,
+        msgs,
+        honest=False,
+        adult=True,
+        direct=False,
+        channel=None,
+        minors=False,
+        said=None,
+        work=False,
+        joking=False,
+        baited=False,
+    ):
+        if any(guard.gibberish(ln) for ln in lines):
+            return "gibberish"
+        if said and guard.laughing_at_nothing(lines, said, joking):
+            return "laughing at nothing"
+        if baited and guard.plays_the_ai_game(lines):
+            return "ai game"
+        if self.repeated(lines, channel):
+            return "repetitive"
         if any(ROBOTIC.search(ln) for ln in lines):
             return "robotic"
+        if guard.does_the_work(lines, asked=work):
+            return "doing the work"
         if any(self.app.identity.wrong(ln) for ln in lines):
             return "out of character"
         if said and lines and all(JUST_HI.match(ln) for ln in lines) and not self.greeting(said):

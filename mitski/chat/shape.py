@@ -14,8 +14,6 @@ PARAGRAPH = 80
 
 
 def bubbles(lines, limit=QUICK_MAX):
-    """At most `limit` separate messages: past that, the two shortest neighbours become one message with a line
-    break, the way people send a burst of three or four, not eight one-liners in a row."""
     out = list(lines)
     while len(out) > max(1, limit):
         pairs = [
@@ -31,13 +29,10 @@ def bubbles(lines, limit=QUICK_MAX):
 
 
 def paragraphs(answers, longer):
-    """Blank lines between answers only read right in a longer, proper message: in a quick chat reply nobody
-    leaves a gap between two short lines."""
     return longer and len(answers) >= 2 and all(sum(map(len, a)) >= PARAGRAPH for a in answers)
 
 
 def group_answers(lines, owners):
-    """Lines that answer the same message go together, a line that answers nothing goes with its neighbours."""
     groups = {}
     waiting = []
     last = None
@@ -56,7 +51,6 @@ def group_answers(lines, owners):
 
 
 def threaded(groups, rng):
-    """Each group replies to its own message. Extra lines go on the same message or follow it as plain ones."""
     parts, targets = [], []
     for msg, lines in groups:
         if len(lines) > 1 and rng.random() < 0.5:
@@ -70,12 +64,6 @@ def threaded(groups, rng):
 
 
 def pick(answers, *, serious=False, crowded=False, can_thread=False, longer=False, rng=None):
-    """How a reply looks once it's written: a few quick messages, one longer message, or a reply to each question.
-
-    The model can't choose this, it almost never saw a line break in training, so it's decided here from what a
-    person would go by: how many things they're answering, how long it is, and how busy the chat is. A reply that
-    was meant to be longer leans towards one proper message, the way people write when they're really explaining.
-    """
     rng = rng or random
     lines = [ln for answer in answers for ln in answer]
     if len(lines) < 2 or any(STICKER_TAG.fullmatch(ln) for ln in lines):

@@ -6,6 +6,7 @@ from mitski.chat.messages import short_name
 from mitski.core import logs
 from mitski.core.clock import time_phrase
 from mitski.core.component import Component
+from mitski.core.texts import say
 
 log = logs.get("sleep")
 
@@ -38,12 +39,7 @@ class SleepCycle(Component):
         context = await self.app.context.build(channel, "ambient", trigger)
         if not context.turns:
             return
-        note = (
-            "(notes only you can see, for your next message)\n"
-            f"{time_phrase(self.app.clock.now())}\n"
-            "You're heading off for a while now (sleep, food, irl stuff, whatever fits the time). Say a quick bye to "
-            "the chat, one short line, no big explanation."
-        )
+        note = say("life.heading_off", time=time_phrase(self.app.clock.now()))
         policy = self.app.policy
         persona = "\n\n".join(
             (

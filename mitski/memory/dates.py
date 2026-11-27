@@ -3,6 +3,7 @@ import re
 import time
 
 from mitski.core.clock import DAY
+from mitski.core.texts import fill, wording
 from mitski.memory.schema import MONTHS
 
 
@@ -60,29 +61,33 @@ def birthdays_between(md, t0, t1):
 
 
 def said_ago(t, now=None):
+    words = wording("memory.said_ago")
     secs = (now or time.time()) - t
     if secs < 3600:
-        return "a little while ago"
+        return words["little_while"]
     if secs < 6 * 3600:
-        return "a few hours ago"
+        return words["few_hours"]
     days = int(secs // DAY)
     if days == 0:
-        return "earlier today"
+        return words["earlier_today"]
     if days == 1:
-        return "yesterday"
+        return words["yesterday"]
     if days < 14:
-        return f"{days} days ago"
+        return fill(words["days"], n=days)
     if days < 60:
-        return f"{days // 7} weeks ago"
-    return f"{days // 30} months ago"
+        return fill(words["weeks"], n=days // 7)
+    return fill(words["months"], n=days // 30)
 
 
 def until(date, today):
+    words = wording("memory.until")
     n = (date - today).days
     if n == 0:
-        return "today"
+        return words["today"]
     if n == 1:
-        return "tomorrow"
+        return words["tomorrow"]
     if n < 0:
-        return "yesterday" if n == -1 else f"{-n} days ago"
-    return f"{date.strftime('%A')}, in {n} days" if n < 7 else f"{date.strftime('%B')} {date.day}, in {n} days"
+        return words["yesterday"] if n == -1 else fill(words["days_ago"], n=-n)
+    if n < 7:
+        return fill(words["this_week"], weekday=date.strftime("%A"), n=n)
+    return fill(words["later"], month=date.strftime("%B"), day=date.day, n=n)

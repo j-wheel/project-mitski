@@ -11,8 +11,6 @@ from mitski.testing.fakes import FakeChannel, FakeDM, FakeMessage, settle
 
 
 class MovingClock:
-    """Every look at the clock moves it a minute, so a wait for her to look actually ends."""
-
     def __init__(self, step=60):
         self.when = datetime(2026, 11, 2, 20, 0, tzinfo=UTC)
         self.step = timedelta(seconds=step)
@@ -39,7 +37,7 @@ async def test_she_doesnt_see_a_ping_right_away_when_busy(busy_world):
     world.replies.append("sorry just saw this")
     await world.send(world.people["anna"], "mitski u there")
     assert world.sent_text() == ["sorry just saw this"]
-    assert world.app.routine.looking()
+    assert world.app.routine.sat_down, "she picked up her phone to answer"
     assert "out with a friend" in world.prompts[0]
 
 
@@ -67,9 +65,9 @@ async def test_waiting_doesnt_block_the_channel(busy_world):
     locks = []
     original = world.app.routine.notice_at
 
-    def notice(kind, owner=False):
+    def notice(kind, guild_id=None):
         locks.append(world.app.state.channel_locks.get(world.channel.id))
-        return original(kind, owner)
+        return original(kind, guild_id=guild_id)
 
     world.app.routine.notice_at = notice
     world.replies.append("hi")
@@ -176,6 +174,7 @@ def dm_world(world, monkeypatch):
         opened.append(user)
 
     monkeypatch.setattr(world.app.dms, "open", fake_open)
+    monkeypatch.setattr(world.app.feelings, "close_enough_to_dm", lambda user: True)
     world.app.cfg.DM_CHANCE = 1.0
     world.app.cfg.DM_MIN_EXCHANGES = 1
     return world, opened

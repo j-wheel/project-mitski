@@ -51,6 +51,9 @@ GROUPS = (
             Command("ignoreuser", ("iu", "ignoreusers"), "<id ...>", "ignore users completely (also forgets them)"),
             Command("unignoreuser", ("uu", "unignoreusers"), "<id ...>", "stop ignoring users"),
             Command("listusers", ("lu", "ignored"), "", "list ignored users"),
+            Command("block", ("bl",), "<id ...>", "block users on discord (she ignores them from then on)"),
+            Command("unblock", ("ub",), "<id ...>", "unblock users on discord"),
+            Command("blocked", ("bd",), "", "who she's blocked"),
         ),
     ),
     (
@@ -114,11 +117,8 @@ GROUPS = (
         ),
     ),
     (
-        "owner",
-        (
-            Command("orders", ("ord",), "[add <rule>|forget <n>|clear]", "list or change her standing orders"),
-            Command("quiet", ("q",), "<min|off> [server]", "completely quiet in a server, or everywhere without one"),
-        ),
+        "quiet",
+        (Command("quiet", ("q",), "<min|off> [server]", "completely quiet in a server, or everywhere without one"),),
     ),
     (
         "bot",

@@ -1,0 +1,41 @@
+# reminders
+# {name} is filled in by the code (the names each text can use are listed in its comment, or just keep the ones
+# already there). everything else is said as written, json braces too. write {{name}} to say a literal {name}.
+
+# fills in: {when}
+already_set: >-
+  You already said you'd do that reminder ({when}), so just say so casually, like "already on it".
+
+# fills in: {who}
+who_is_that: "They want you to remind {who} about something, but you don't know who that is, so ask."
+
+# she just set a reminder. fills in: {them}, {when}, {what}, {name}
+set: >-
+  You'll remind {them} {when} ({what}) and ping {them} then. Let {name} know like a friend would, short and casual
+  ("bet", "ok ill bug him at 8"), not like an assistant confirming it, and don't repeat their whole request back.
+
+no_time: "They want a reminder but didn't say when (or you couldn't tell), so ask them when."
+
+right_now: "That reminder would be right now, so just tell them now instead."
+
+# fills in: {max_days}
+too_far: "That's too far ahead for you to remember (more than {max_days} days), say so."
+
+too_many: >-
+  They already asked you for a bunch of reminders, so say you can't keep track of more right now.
+
+# sending the reminder. fills in: {name}, {what}
+time_to_remind: "It's time to remind {name} about: {what}."
+
+# fills in: {when_asked}
+they_asked: "They asked you {when_asked}."
+
+# fills in: {name}, {when_asked}
+asked_by: "{name} asked you to remind them ({when_asked})."
+
+late: "You're a bit late with it."
+
+write_it: "Write the reminder to them now, short and in your own words, like texting a friend."
+
+# what she sends if her model can't write it. fills in: {what}
+fallback: "hey reminder: {what}"

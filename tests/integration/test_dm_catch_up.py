@@ -4,7 +4,6 @@ from mitski.testing.fakes import FakeDM, FakeMessage, settle
 
 
 def dm_from(world, person, *texts, hours_ago=2.0, hers=False):
-    """A dm with person, their messages sent hours_ago (or hers, if she was the last one)."""
     dm = getattr(person, "_dm", None) or FakeDM(world.client, person)
     person._dm = dm
     if dm not in world.client.private_channels:

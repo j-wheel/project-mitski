@@ -74,7 +74,6 @@ def same_topic(a, b):
 
 
 def needs_own_answer(text):
-    """A question or request, not a remark, a reaction or an emoji."""
     text = clean(text)
     if not re.search(r"[A-Za-z0-9]", text) or LOW_EFFORT.match(text) or JUST_HI.match(text):
         return False
@@ -101,7 +100,7 @@ class Addressing(Component):
 
     def engage(self, channel_id, user_id, refill=False):
         key = (channel_id, user_id)
-        boost = 2 if self.app.owner.is_owner(user_id) else 1
+        boost = 1
         e = self.state.engaged.get(key) or Engagement(NEVER)
         e.until = time.monotonic() + self.cfg.ENGAGE_SEC * boost
         if refill:
@@ -164,8 +163,6 @@ class Addressing(Component):
         return [Thing(piece, m) for m in burst for piece in split_questions(self.messages.text(m))][:MAX_PIECES]
 
     def separate_things(self, pieces, thought):
-        """The separate questions in what someone sent, each needing its own answer. Remarks, reactions and emojis
-        never count: a person answers questions one by one, but reacts to a few remarks in a row as one thing."""
         if len(pieces) < 2:
             return list(pieces)
         if thought.topics:
@@ -230,16 +227,12 @@ class Addressing(Component):
         if self.app.sleep.state_of(msg.channel):
             return False
         if msg.id not in self.state.chime_rolls:
-            chance = (
-                max(self.cfg.CHIME_IN_CHANCE, 0.6) if self.app.owner.is_owner(msg.author) else self.cfg.CHIME_IN_CHANCE
-            )
+            chance = self.cfg.CHIME_IN_CHANCE
             chance *= self.app.feelings.chime_factor(msg.author)
             self.state.chime_rolls[msg.id] = random.random() < chance
         return self.state.chime_rolls[msg.id]
 
     def aimed_at_her(self, msg, hers=()):
-        """Strictly: was this said TO her? Not near her, not about her to someone else, not to anyone else at all.
-        Used for anything that changes how she feels about someone, where a wrong guess would be unfair."""
         if isinstance(msg.channel, discord.DMChannel):
             return True
         replied_to = getattr(getattr(msg.reference.resolved if msg.reference else None, "author", None), "id", None)
@@ -250,8 +243,6 @@ class Addressing(Component):
         return self.named_directly(msg.content) or self.answers_her(msg, hers)
 
     def named_directly(self, text):
-        """Her name used to talk to her ("mitski ur annoying", "hey mitski", "ur so cute mitski"), not to talk
-        about her ("mitski is annoying", "i think mitski is cute"). Only her real names, not pet names."""
         lowered = clean(text or "").lower()
         names = {short_name(self.me).lower(), self.me.name.lower(), *self.triggers} - {""}
         for name in names:
@@ -264,7 +255,6 @@ class Addressing(Component):
         return False
 
     def answers_her(self, msg, hers=()):
-        """Their message comes straight after something she said to them, with nobody else talking in between."""
         events = dict(self.state.chan_log.get(msg.channel.id, ()))
         last = self.app.sender.last_sent.get(msg.channel.id)
         for mid in [m.id for m in hers] + ([last] if last else []):
@@ -277,7 +267,6 @@ class Addressing(Component):
         return False
 
     def target_of(self, msg):
-        """The other person a message is aimed at (a reply to them or a ping), or None."""
         author = getattr(msg.reference.resolved if msg.reference else None, "author", None)
         if author is not None and author.id not in (self.me.id, msg.author.id):
             return author

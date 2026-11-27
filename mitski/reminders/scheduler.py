@@ -9,6 +9,7 @@ from mitski.chat.messages import short_name
 from mitski.core import logs
 from mitski.core.clock import ago
 from mitski.core.component import Component
+from mitski.core.texts import say, wording
 from mitski.reminders.timing import describe, due_time
 
 log = logs.get("reminders")
@@ -30,16 +31,11 @@ class ReminderScheduler(Component):
         existing = self.store.by_source(target.id)
         if existing is not None:
             when = datetime.fromtimestamp(existing.due, now.tzinfo)
-            return [
-                f"You already said you'd do that reminder ({describe(when, now)}), so just say so casually, like "
-                f'"already on it".'
-            ]
+            return [say("reminders.already_set", when=describe(when, now))]
         guild = getattr(channel, "guild", None)
         who = self.messages.resolve_person(request.get("who"), guild, asker=target.author, context=[target])
         if who is None:
-            return [
-                f"They want you to remind {request.get('who')} about something, but you don't know who that is, so ask."
-            ]
+            return [say("reminders.who_is_that", who=request.get("who"))]
         if who.id in self.cfg.ignored:
             return []
         when = due_time(request.get("said") or self.messages.text(target), request, now)
@@ -56,21 +52,19 @@ class ReminderScheduler(Component):
             f"{describe(when, now)}: {what}"
         )
         return [
-            f"You'll remind {them} {describe(when, now)} ({what}) and ping {them} then. Let "
-            f'{self.messages.call(target.author)} know like a friend would, short and casual ("bet", "ok ill bug '
-            f"him at 8\"), not like an assistant confirming it, and don't repeat their whole request back."
+            say("reminders.set", them=them, when=describe(when, now), what=what, name=self.messages.call(target.author))
         ]
 
     def _problem(self, when, now, asker):
         if when is None:
-            return "They want a reminder but didn't say when (or you couldn't tell), so ask them when."
+            return wording("reminders.no_time")
         secs = (when - now).total_seconds()
         if secs < 50:
-            return "That reminder would be right now, so just tell them now instead."
+            return wording("reminders.right_now")
         if secs > self.store.max_days * 86400:
-            return f"That's too far ahead for you to remember (more than {self.store.max_days:g} days), say so."
-        if not self.app.owner.is_owner(asker) and self.store.pending_from(asker.id) >= self.store.max_per_user:
-            return "They already asked you for a bunch of reminders, so say you can't keep track of more right now."
+            return say("reminders.too_far", max_days=format(self.store.max_days, "g"))
+        if self.store.pending_from(asker.id) >= self.store.max_per_user:
+            return wording("reminders.too_many")
         return None
 
     async def _destination(self, r, user):
@@ -89,14 +83,14 @@ class ReminderScheduler(Component):
         by = self.app.get_user(r.by)
         when_asked = ago(r.made, time.time())
         note = (
-            f"It's time to remind {self.messages.call(user)} about: {r.what}. "
+            (say("reminders.time_to_remind", name=self.messages.call(user), what=r.what) + " ")
             + (
-                f"They asked you {when_asked}. "
+                (say("reminders.they_asked", when_asked=when_asked) + " ")
                 if r.for_themselves or by is None
-                else f"{self.messages.call(by)} asked you to remind them ({when_asked}). "
+                else (say("reminders.asked_by", name=self.messages.call(by), when_asked=when_asked) + " ")
             )
-            + ("You're a bit late with it. " if time.time() - r.due > 600 else "")
-            + "Write the reminder to them now, short and in your own words, like texting a friend."
+            + ((wording("reminders.late") + " ") if time.time() - r.due > 600 else "")
+            + wording("reminders.write_it")
         )
         persona = self.app.situation.persona(user, getattr(channel, "guild", None), channel=channel)
         names = sorted({short_name(user), self.messages.call(user)} | self.messages.speaker_names())
@@ -106,7 +100,7 @@ class ReminderScheduler(Component):
         except Exception:
             log.warning("writing reminder #%d failed, sending a plain one", r.id, exc_info=True)
             lines = []
-        return lines or [f"hey reminder: {r.what}"]
+        return lines or [say("reminders.fallback", what=r.what)]
 
     async def deliver(self, r):
         try:

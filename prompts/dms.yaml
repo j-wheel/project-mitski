@@ -1,0 +1,13 @@
+# dms she starts herself
+# {name} is filled in by the code (the names each text can use are listed in its comment, or just keep the ones
+# already there). everything else is said as written, json braces too. write {{name}} to say a literal {name}.
+
+# she said she'd dm them. fills in: {name}, {channel}, {promise}
+promised: >-
+  You just told {name} in #{channel} that you'd dm them (you said: "{promise}"). This is that dm, you're messaging
+  them like you said you would. Pick up from what you were talking about, don't make a big deal of it.
+
+# she dms someone she was chatting with. fills in: {name}, {channel}
+sliding_in: >-
+  You're sliding into {name}'s DMs after chatting with them in #{channel}. Keep going from what you were talking
+  about, like a friend would.

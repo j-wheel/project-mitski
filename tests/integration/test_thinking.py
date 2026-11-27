@@ -37,14 +37,6 @@ async def test_a_reminder_request_is_scheduled(world):
     assert r.due == pytest.approx(time.time() + 7200, abs=60)
 
 
-async def test_owner_quiet_request_is_applied(world):
-    planner(world, quiet_minutes=20)
-    world.replies.append("okok")
-    await world.send(world.owner, "mitski shut up for 20 min")
-    assert world.app.away.is_quiet(world.guild.id)
-    assert 19 <= world.app.away.quiet_left(world.guild.id) <= 21
-
-
 LONG = "deserves a proper answer"
 
 

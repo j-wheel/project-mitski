@@ -4,8 +4,7 @@ import time
 
 import discord
 
-from mitski.chat import convo, shape, typos
-from mitski.chat.messages import short_name
+from mitski.chat import convo, guard, shape, typos
 from mitski.chat.patterns import NO_PINGS, PING_TAG, STICKER_TAG
 from mitski.core import logs
 from mitski.core.component import Component
@@ -31,21 +30,13 @@ class Sender(Component):
             self.state.addressed[m.id] = user_id
 
     def may_ping(self, user):
-        if (
+        return not (
             not self.cfg.PINGS
             or user is None
             or user.id in self.cfg.ignored
             or (self.me and user.id == self.me.id)
             or getattr(user, "bot", False)
-        ):
-            return False
-        names = {
-            short_name(user),
-            self.messages.call(user),
-            getattr(user, "name", ""),
-            getattr(user, "display_name", ""),
-        }
-        return not convo.ping_forbidden([o["text"] for o in self.app.owner.data.get("orders", [])], names)
+        )
 
     def styled(self, lines, parts, serious, layout, longer=False):
         if parts and layout == shape.BLOCK:
@@ -75,8 +66,6 @@ class Sender(Component):
         owned=None,
         job=None,
     ):
-        """owned: the messages this reply was written for ({message id: author id}). Nothing she sends here can
-        reply to or ping anything outside it, whatever the delivery plan says."""
         styled = self.styled(lines, parts, serious, layout, longer)
         recent = [uid for _, uid in list(self.state.chan_log.get(channel.id, ()))[-30:]]
         audience = [*recent, *(u.id for u in (people or {}).values()), getattr(ping, "id", None)]
@@ -86,6 +75,11 @@ class Sender(Component):
         if len(lines) < len(styled):
             log.warning("held back %d explicit line(s) in %s", len(styled) - len(lines), channel)
             Metrics.event("explicit held back")
+        noise = [ln for ln in lines if guard.gibberish(ln) or guard.does_the_work([ln], asked=False)]
+        if noise:
+            log.warning("held back %d line(s) of gibberish or homework: %s", len(noise), noise)
+            Metrics.event("gibberish held back")
+            lines = [ln for ln in lines if ln not in noise]
         wrong = [ln for ln in lines if self.app.identity.wrong(ln)]
         if wrong:
             log.warning("held back %d line(s) that got her own age, gender or country wrong: %s", len(wrong), wrong)
@@ -197,9 +191,6 @@ class Sender(Component):
             log.warning("sticker failed: %s", e)
 
     async def _type(self, out, line, already_typed, longest=None):
-        """ "Is typing" only shows while she's actually typing a message out, never while her model is still working
-        on it (that can take a while when she's busy). The time the draft took still counts as writing time, so the
-        first message isn't held back, but it always shows her typing for a moment before it lands."""
         longest = TYPING_MAX if longest is None else longest
         seconds = min(len(line) / (self.cfg.TYPING_CPS * random.uniform(0.8, 1.2)), longest) + random.uniform(0.2, 0.8)
         if not out.sent:
@@ -249,6 +240,7 @@ class Sender(Component):
         out.sent.append(msg)
         self.last_sent[out.channel.id] = msg.id
         self.last_at[out.channel.id] = time.monotonic()
+        self.app.reacted.sent(msg.id, out.channel.id, line)
         Metrics.sent()
         self.state.recent_said[out.channel.id].append(line)
         if out.guild is not None:

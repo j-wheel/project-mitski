@@ -8,6 +8,7 @@ from mitski.core import logs
 from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.text import cut, squash
+from mitski.core.texts import say, wording
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi as YTApi
@@ -72,9 +73,8 @@ class YouTube(Component):
             transcript = await asyncio.to_thread(self.transcript, vid)
             if transcript:
                 summary = await self.app.helper.ask_text(
-                    "You summarize youtube videos for someone who hasn't watched them.",
-                    f'Transcript of the youtube video "{info["title"]}" by {info["author"]}:\n\n{transcript}\n\n'
-                    f"In 2 or 3 short sentences: what is the video about and what happens in it? Plain text only.",
+                    wording("search.youtube_system"),
+                    say("search.youtube", title=info["title"], author=info["author"], transcript=transcript),
                     320,
                 )
                 if summary:
@@ -103,10 +103,10 @@ class YouTube(Component):
             if not info["title"]:
                 continue
             who = "You" if m.author.id == self.me.id else self.messages.call(m.author)
-            line = f'{who} shared a youtube video: "{info["title"]}" by {info["author"]}.'
+            line = say("media.youtube_shared", who=who, title=info["title"], author=info["author"])
             if info.get("summary"):
-                line += f" You watched it, it's about: {info['summary']}"
+                line += " " + say("media.youtube_watched", summary=info["summary"])
             elif info.get("desc"):
-                line += f" Its description: {cut(squash(info['desc']), 300)}"
+                line += " " + say("media.youtube_description", description=cut(squash(info["desc"]), 300))
             out.append(line)
         return "\n".join(out)

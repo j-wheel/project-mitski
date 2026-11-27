@@ -5,6 +5,8 @@ from datetime import datetime, time, timedelta
 
 from mitski.core import logs
 from mitski.core.component import Component
+from mitski.core.texts import say, wording
+from mitski.social import games
 from mitski.social.life import LifePlanner
 
 log = logs.get("routine")
@@ -16,7 +18,6 @@ PRIORITY = {ASLEEP: 0, BUSY: 1, GAMING: 2}
 PRESENCE = {ASLEEP: "invisible", BUSY: "idle"}
 
 URGENCY = {"dm": 0.4, "ping": 0.6, "chat": 1.0}
-OWNER_MAX_WAIT = 300
 WAKE_UP_SEC = (60, 1500)
 LONGEST_SITTING = 900
 KEEP_AROUND_SEC = (60, 180)
@@ -35,6 +36,7 @@ class Spell:
     end: datetime
     level: str
     what: str
+    game: str = ""
 
     def covers(self, now):
         return self.start <= now < self.end
@@ -71,20 +73,21 @@ def _place(rng, day, tz, spells, count, what, level, minutes, done_by):
     earliest = awake[0].end if awake else datetime.combine(day, time(9), tz)
     latest = datetime.combine(day, done_by, tz)
     for thing in rng.sample(list(what), min(count, len(what))):
+        doing, game = thing if isinstance(thing, tuple) else (thing, "")
         for _attempt in range(12):
             length = timedelta(minutes=rng.uniform(*minutes))
             room = (latest - earliest - length).total_seconds()
             if room <= 0:
                 break
             start = earliest + timedelta(seconds=rng.uniform(0, room))
-            spell = Spell(start, start + length, level, thing)
+            spell = Spell(start, start + length, level, doing, game)
             if not any(spell.overlaps(s) for s in spells):
                 spells.append(spell)
                 break
 
 
 def plan_day(day, week, tz, seed=""):
-    """One day of her life. The same day always comes out the same, so a restart doesn't change her plans."""
+
     rng = random.Random(f"{seed}:{day.isoformat()}")
     weekend = day.weekday() >= 5
     spells = []
@@ -107,7 +110,8 @@ def plan_day(day, week, tz, seed=""):
             spells.append(Spell(start, lunch, BUSY, week.busy_what))
             spells.append(Spell(back, end, BUSY, week.busy_what))
     _place(rng, day, tz, spells, rng.randint(*week.errands_per_day), week.errands, BUSY, ERRAND_MIN, ERRANDS_DONE_BY)
-    _place(rng, day, tz, spells, rng.randint(*week.games_per_day), week.games, GAMING, GAMING_MIN, GAMES_DONE_BY)
+    sessions = [(games.session(g, rng), g) for g in week.games]
+    _place(rng, day, tz, spells, rng.randint(*week.games_per_day), sessions, GAMING, GAMING_MIN, GAMES_DONE_BY)
     return sorted(spells, key=lambda s: s.start)
 
 
@@ -166,7 +170,6 @@ class Routine(Component):
         return "planning her day again, ask for her routine again in a minute or two"
 
     def awake_here(self, guild_id):
-        """Servers she's set never to sleep in (SLEEP_EXCLUDE, !sleepexclude) ignore her routine's sleep too."""
         if guild_id is None:
             return False
         away = getattr(self.app, "away", None)
@@ -205,6 +208,14 @@ class Routine(Component):
     def level(self):
         spell = self.spell()
         return spell.level if spell else None
+
+    def game_now(self):
+        if not self.on:
+            return None
+        spell = self.spell()
+        if spell is None or spell.level != GAMING:
+            return ""
+        return spell.game or games.match(spell.what, self.cfg.ROUTINE_GAMES)
 
     @property
     def can_hang_out(self):
@@ -245,18 +256,16 @@ class Routine(Component):
             longest = self.sat_down + LONGEST_SITTING
             self.around_until = min(max(self.around_until, t + random.uniform(*KEEP_AROUND_SEC)), longest)
 
-    def notice_at(self, kind, owner=False, guild_id=None):
+    def notice_at(self, kind, guild_id=None):
         spell, t = self.spell(guild_id=guild_id), self.stamp()
         if spell is None:
             return t
-        if owner and spell.level == ASLEEP:
-            return t + random.uniform(60, OWNER_MAX_WAIT)
         if spell.level == ASLEEP:
             return spell.end.timestamp() + random.uniform(*WAKE_UP_SEC)
         if self.next_look <= t:
             self.next_look = t + self._look_gap(spell)
         wait = (self.next_look - t) * URGENCY[kind] * random.uniform(0.7, 1.3)
-        return t + (min(wait, OWNER_MAX_WAIT) if owner else wait)
+        return t + wait
 
     def status(self):
         if self.cfg.ROUTINE_PRESENCE:
@@ -270,16 +279,17 @@ class Routine(Component):
         if spell is None:
             return self.planner.today_note(self.now()) if self.on else ""
         if spell.level == ASLEEP:
-            return "You were asleep and this just woke you up, so you're groggy and keep it short."
-        return f"Right now you're {spell.what}, so you're only half here and keep it short."
+            return wording("life.woke_up")
+        return say("life.half_here", doing=spell.what)
 
     def seen_late(self, seconds, what):
         minutes = round(seconds / 60)
-        how_long = f"about {round(minutes / 60)} hours" if minutes >= 90 else f"about {minutes} minutes"
-        return (
-            f"You only just saw this, {how_long} after they sent it, because you were {what}. Only bring that up if "
-            f"it fits, no big apology."
+        how_long = (
+            say("life.seen_hours", hours=round(minutes / 60))
+            if minutes >= 90
+            else say("life.seen_minutes", minutes=minutes)
         )
+        return say("life.seen_late", how_long=how_long, doing=what)
 
     def set_busy(self, minutes, what="busy"):
         now = self.now()

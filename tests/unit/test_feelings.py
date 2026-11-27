@@ -113,14 +113,6 @@ def test_nobody_can_flatter_their_way_up_in_a_day(make):
     assert d["regard"]["like"] <= 15.01
 
 
-def test_her_owner_never_drops_below_a_floor(make):
-    f = make()
-    d = person(f, OWNER)
-    for _ in range(10):
-        f.apply(NS(id=OWNER), d, "threatened_her", 3, "threatened you")
-    assert d["regard"]["like"] >= fe.OWNER_FLOOR["like"] and d["regard"]["trust"] >= fe.OWNER_FLOOR["trust"]
-
-
 def test_a_minor_never_builds_chemistry(make):
     f = make()
     d = person(f, KID)
@@ -259,14 +251,14 @@ def test_moods_have_a_baseline_from_her_day():
     assert m.level("stressed", NOW + 48 * 3600) == pytest.approx(0.3, abs=0.01)
 
 
-def test_she_leaves_people_she_cant_stand_on_read_sometimes_but_never_her_owner(make, monkeypatch):
+def test_she_leaves_people_she_cant_stand_on_read_sometimes(make, monkeypatch):
     f = make(LEAVE_ON_READ=1.0)
     monkeypatch.setattr(fe.random, "random", lambda: 0.0)
     f.regard(person(f, ANNA))["like"] = -90
     f.regard(person(f, OWNER))["like"] = -90
     assert f.leaves_on_read(NS(id=ANNA))
     assert not f.leaves_on_read(NS(id=ANNA), "comfort")
-    assert not f.leaves_on_read(NS(id=OWNER))
+    assert f.leaves_on_read(NS(id=OWNER))
     f.regard(person(f, ANNA))["like"] = 10
     assert not f.leaves_on_read(NS(id=ANNA))
 

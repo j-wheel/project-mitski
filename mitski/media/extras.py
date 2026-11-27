@@ -11,6 +11,7 @@ from mitski.chat.patterns import NO_PINGS
 from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 
 log = logs.get("extras")
 
@@ -60,10 +61,8 @@ class Extras(Component):
             f"{i}. {s.name}" + (f" ({cut(about(s), 90)})" if about(s) else "") for i, s in enumerate(stickers, 1)
         )
         prompt = self.llm.fmt.instruct(
-            "You pick stickers for messages in a discord chat.",
-            f'{her} just said this in a discord chat:\n"{cut(text, 300)}"\n\n'
-            f"Which of these stickers would she send right after it?\n{listing}\n0. none of them fit\n\n"
-            f"Answer with only the number.",
+            wording("media.sticker_system"),
+            say("media.sticker", her=her, text=cut(text, 300), listing=listing),
         )
         try:
             out = await self.llm.generate(prompt, temperature=0.5, n_predict=6, helper=True)

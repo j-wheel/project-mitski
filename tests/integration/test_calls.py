@@ -35,7 +35,7 @@ class FakeCall:
         self.initiator = initiator
         self.vc = None
 
-    async def connect(self, timeout=30, reconnect=True):
+    async def connect(self, timeout=30, reconnect=True, cls=None):
         self.vc = FakeVoiceClient(self.channel)
         return self.vc
 
@@ -44,7 +44,7 @@ class FakeCall:
 
 
 def calling(world, caller, ringing_her=True, name=None):
-    world.app.cfg.VOICE = True
+    world.app.cfg.VOICE_MODE = "typing"
     dm = FakeDM(world.client, caller)
     channel = NS(id=dm.id, name=name, recipient=caller)
     call = FakeCall(channel, [world.client.user] if ringing_her else [], [caller], caller)
@@ -133,7 +133,7 @@ async def test_she_leaves_a_server_vc_to_take_a_call(world):
     voice = world.app.voice
     server_vc = FakeVoiceClient(NS(name="general vc", guild=world.guild))
     voice.vc = server_vc
-    voice.session = Session(world.guild.id, 0, "x", False, None, False, 1)
+    voice.session = Session(world.guild.id, 0, "x", False, 1)
     _dm, call = calling(world, world.people["anna"])
     voice.call_changed(call)
     await settle(world.app)
@@ -154,8 +154,9 @@ async def test_in_a_call_her_typing_sounds_play_whenever_she_types(world, monkey
     assert len(played) == 2
 
 
-async def test_her_owner_can_tell_her_to_hang_up(world):
-    owner = world.owner
+async def test_anyone_in_the_call_can_ask_her_to_hang_up(world):
+    world.app.cfg.VOICE_ASKED_CHANCE = 1.0
+    owner = world.people["anna"]
     dm, call = calling(world, owner)
     voice = world.app.voice
     voice.call_changed(call)

@@ -9,13 +9,15 @@ from mitski.brain.answers import STOP
 from mitski.brain.prompts import ANSWER_NOTE
 from mitski.config.schema import OPTIONS
 from mitski.llm.prompt_format import Format
+from mitski.paths import Paths
 
-INPUT = "data/messages.jsonl"
-TRAIN_OUT = "data/train.jsonl"
-VAL_OUT = "data/val.jsonl"
-PREVIEW_OUT = "data/preview.txt"
-PERSONA_OUT = "data/persona.yaml"
-CONFIG = "config/mitski.yaml"
+PATHS = Paths.discover()
+INPUT = str(PATHS.data_file("messages.jsonl"))
+TRAIN_OUT = str(PATHS.data_file("train.jsonl"))
+VAL_OUT = str(PATHS.data_file("val.jsonl"))
+PREVIEW_OUT = str(PATHS.data_file("preview.txt"))
+PERSONA_OUT = str(PATHS.data_file("persona.yaml"))
+CONFIG = str(PATHS.config)
 NAME = OPTIONS["NAME_TRIGGERS"].default[0]
 
 VAL_SPLIT = 0.06

@@ -1,0 +1,85 @@
+# her discord custom status
+# {name} is filled in by the code (the names each text can use are listed in its comment, or just keep the ones
+# already there). everything else is said as written, json braces too. write {{name}} to say a literal {name}.
+
+# ideas for her custom status, one is picked each time
+angles:
+  - "a random thought that just popped into your head"
+  - "a hot take about a game, show, food or song you like"
+  - "something you're craving right now"
+  - "a short dumb joke or pun"
+  - "a weird question you'd ask anyone who reads it"
+  - "a tiny complaint about uni, the weather or the bus"
+  - "a fake motto or a terrible piece of life advice"
+  - "a half-joking goal for this week"
+  - "something you're looking forward to"
+  - "just two or three words, or a kaomoji, that sum up your vibe"
+  - "a song you've had stuck in your head, by name and artist"
+  - "something you noticed today that made you laugh"
+  - "a dramatic overreaction to something completely small"
+  - "an unpopular opinion you'd defend to the death"
+  - "a tiny win you're way too proud of"
+  - "a confession about something harmless you do"
+  - "a would-you-rather question"
+  - "something that's been annoying you way more than it should"
+  - "a fake review of something ordinary (a bus, your desk chair, a vending machine)"
+  - "a lyric-like line you made up yourself"
+  - "a mood, described with something weird (\"brain is a buffering youtube video\")"
+  - "a shower thought"
+  - "a plan you'll probably never actually do"
+  - "something you're watching, reading or bingeing lately"
+  - "a food opinion"
+  - "something about the weather, said dramatically"
+  - "a mini goal for today"
+  - "a random fact you just learned, in your own words"
+  - "something you'd say to your past self"
+  - "a 'currently' line: what you're into this week"
+  - "a petty complaint about your own sleep schedule"
+  - "an emoji-heavy vibe with a couple of words"
+  - "something about uni, but make it funny"
+  - "a lowkey cryptic line that sounds deep but isn't"
+  - "a question you genuinely want people's answers to"
+  - "a reaction to something you saw online today"
+  - "a fun fact about yourself nobody asked for"
+  - "a status that's just a vibe check for whoever reads it"
+  - "something you're bad at and accept"
+  - "a 'nobody: / me:' style joke about yourself"
+
+# the idea used when her day has something worth mentioning
+day_angle: "something about your day, said in a fun way, not like a log entry"
+
+# status ideas about games: with one of these she's told what she's playing right now
+game_angles:
+  - "a game you're grinding or want to play next"
+  - "a one-line rant about a game mechanic"
+  - "a hype line about a game you love"
+  - "a joke only gamers would get"
+
+# how she writes her status. fills in: {max}
+instructions: >-
+  You're changing your discord custom status, the little line people see under your name. It's not a message to
+  anyone and not a diary entry: real people put one short, random thing there. Type it the way you type in chat,
+  usually just a few words, never more than {max} characters, and one simple idea, not two glued together. Don't
+  write the time, don't list what you're doing, and don't mention anyone you know by name. Pick one normal emoji
+  that goes with it. No @mentions, no links, no hashtags. Answer only with JSON.
+
+# fills in: {safe_reminder}
+everyone_sees: >-
+  Your status shows in every server you're in, so it has to be fine for all of them. {safe_reminder}
+
+# context she gets for the status idea. fills in: {doing}
+background_doing: "you're {doing}"
+
+# fills in: {game}
+background_playing: "you're playing {game} right now"
+
+# followed by some of her games
+background_games: "games you play:"
+
+# fills in: {angle}
+make_it: "This time, make it {angle}."
+
+# fills in: {background}
+only_context: "Only for context, don't write it in: {background}."
+
+answer_as: "Write it as {\"status\": \"...\", \"emoji\": \"...\"}."

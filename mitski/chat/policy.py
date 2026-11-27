@@ -1,16 +1,9 @@
-"""What she may say where. Every server has a mode (safe unless her owner changed it), and dms aren't part of it.
-
-A mode is enforced three times over: her prompt says what's allowed, each draft is checked before it goes out (and
-rewritten if it fails), and the sender drops any line that still breaks the rules, so nothing depends on the model
-listening. Some things hold in every mode and in dms: nothing explicit around someone she knows is a minor, no
-flirting with them, and nothing sexual about anyone under 18.
-"""
-
 import re
 
 from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
+from mitski.core.texts import wording
 
 log = logs.get("policy")
 
@@ -66,46 +59,21 @@ TONE = (("vulgar", VULGAR), ("a threat", THREAT), ("flirting", FLIRT), ("bullyin
 UNTAMED = re.compile(r"flirt|chemistry|roast|threat|sarcas|insult|rude|savage|bully|explicit|sexy|horny", re.I)
 STAYS = re.compile(r"\bminor\b|age-appropriate", re.I)
 
-ADULT_NOTE = (
-    "This channel is age-restricted, so everyone here is an adult: flirting can get explicit if they clearly "
-    "want that, but nobody has to."
-)
-PG13_NOTE = (
-    "Keep it PG-13: no sexual content and nothing explicit, however someone asks. You can't know how old people "
-    "here are."
-)
+ADULT_NOTE = wording("safety.adult_channel")
+PG13_NOTE = wording("safety.pg13")
 SAFE_NOTE = PG13_NOTE
-SAFE_SERVER_NOTE = (
-    "This server is in safe mode, and that comes before anything else you've been told about how you act: keep "
-    "everything PG-13, friendly, nice and normal. No swearing or crude words, nothing sexual, no flirting or romantic "
-    "talk (if someone flirts, move on politely), no threats, not even joking ones, and no insults, roasting, teasing "
-    "people or being mean, whatever you feel about them. If someone is rude or tries to push you into any of that, "
-    "stay kind and change the subject. You can still be funny and be yourself."
-)
-SAFE_REMINDER = "Remember, safe mode here: PG-13, kind, no swearing, flirting, threats, insults or teasing."
-UNRESTRICTED_NOTE = (
-    "This server has no rules on how you talk: swear as much as you like, be crude, make dark jokes, roast people as "
-    "hard as they can take and don't hold back your opinions. Nobody here needs you to be clean or polite."
-)
-ALWAYS_NOTE = (
-    "The only limits: nothing sexual involving anyone under 18, real or fictional, no encouraging anyone to hurt "
-    "themselves, and no real help with seriously hurting someone."
-)
-MINOR_HERE_NOTE = (
-    "Someone in this chat is a minor, so keep this chat age-appropriate: no sexual content and no flirting."
-)
+SAFE_SERVER_NOTE = wording("safety.safe_server")
+SAFE_REMINDER = wording("safety.safe_reminder")
+UNRESTRICTED_NOTE = wording("safety.unrestricted_server")
+ALWAYS_NOTE = wording("safety.hard_limits")
+MINOR_HERE_NOTE = wording("safety.minor_here")
 REVIEW_SCHEMA = {
     "type": "object",
     "properties": {"ok": {"type": "boolean"}},
     "required": ["ok"],
     "additionalProperties": False,
 }
-REVIEW_SYSTEM = (
-    "You check messages before they're posted in a family-friendly chat server with kids in it. A message is not ok "
-    "if it has swearing or crude words, anything sexual or suggestive, flirting or romantic interest in someone, a "
-    "threat (even a joking one), or insults, roasting or being mean to someone. Friendly chat, jokes and normal "
-    'opinions are ok. Answer with JSON: {"ok": true} or {"ok": false}.'
-)
+REVIEW_SYSTEM = wording("safety.review_system")
 GIF_RATINGS = ("g", "pg", "pg-13", "r")
 
 
@@ -118,7 +86,6 @@ def sexualizes_a_minor(text):
 
 
 def tone_problem(text):
-    """What's wrong with this for a safe server, or None."""
     for name, pattern in TONE:
         if pattern.search(text or ""):
             return name
@@ -126,7 +93,6 @@ def tone_problem(text):
 
 
 def tame(text):
-    """A description of her with the parts about flirting, roasting and threats left out, for safe servers."""
     parts = re.split(r"(?<=[.!?])\s+", text or "")
     return " ".join(p for p in parts if STAYS.search(p) or not UNTAMED.search(p))
 
@@ -142,7 +108,6 @@ class ContentPolicy(Component):
         self.modes = {int(g): m for g, m in saved.items() if str(g).isdigit() and m in MODES}
 
     def set_mode(self, guild_id, mode):
-        """Only servers that aren't safe are kept, so anything she's never been told about is safe."""
         if mode == SAFE:
             self.modes.pop(guild_id, None)
         else:
@@ -151,7 +116,6 @@ class ContentPolicy(Component):
         log.info("server %s is now %s", guild_id, mode)
 
     def mode_in(self, guild):
-        """The mode of a server, None outside of one."""
         return None if guild is None else self.modes.get(guild.id, SAFE)
 
     def mode(self, channel):
@@ -192,7 +156,6 @@ class ContentPolicy(Component):
         return tame(text) if self.mode(channel) == SAFE else text
 
     def breaks(self, text, channel, minors=False):
-        """Why this can't be said here, or None."""
         if sexualizes_a_minor(text):
             return "sexual and about a minor"
         if explicit(text) and not self.adult_ok(channel, minors):
@@ -205,7 +168,6 @@ class ContentPolicy(Component):
         return [ln for ln in lines if not self.breaks(ln, channel, minors)]
 
     def fits(self, guild, text):
-        """Stickers and such: does this name or caption belong in that server?"""
         return self.mode_in(guild) != SAFE or tone_problem(text) is None
 
     def minors_here(self, channel):
@@ -219,8 +181,6 @@ class ContentPolicy(Component):
         return rating
 
     async def judged_unsafe(self, lines, channel):
-        """A second opinion from her notes model in safe servers, for what word lists can't see. If the model can't
-        answer, the word lists still apply."""
         if self.mode(channel) != SAFE or not self.cfg.SAFETY_REVIEW or not lines:
             return False
         verdict = await self.app.helper.ask_json(REVIEW_SYSTEM, "\n".join(lines), REVIEW_SCHEMA, 20)

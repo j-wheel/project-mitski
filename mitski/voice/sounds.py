@@ -44,6 +44,7 @@ class TypingSounds:
         self.everywhere = False
         self._generation = 0
         self._pending_stop = None
+        self.held = False
 
     def load(self):
         if self.path.exists():
@@ -57,11 +58,10 @@ class TypingSounds:
         return f"typing sounds from {self.path.name}" + (f" ({self.duration:.0f}s)" if self.duration else "")
 
     def attach(self, vc, place, everywhere=False):
-        """place is the server her vc is in, or the dm the call is in. In a server vc they hear her keyboard while
-        she types in that server. In a call (everywhere) they hear it whenever she's typing to anyone."""
         self.vc, self.guild, self.everywhere = vc, place, everywhere
 
     def detach(self):
+        self.held = False
         self.stop()
         self.vc = self.guild = None
         self.everywhere = False
@@ -70,7 +70,7 @@ class TypingSounds:
         return self.counts.get(place, 0) > 0
 
     def heard_typing(self):
-        """How many places she's typing in that the people in her vc or call can hear."""
+
         return sum(self.counts.values()) if self.everywhere else self.counts.get(self.guild, 0)
 
     def _hears(self, place):
@@ -81,7 +81,7 @@ class TypingSounds:
         if self._pending_stop is not None:
             self._pending_stop.cancel()
             self._pending_stop = None
-            if self.vc is not None and self.vc.is_playing():
+            if self.held or (self.vc is not None and self.vc.is_playing()):
                 return
         if self._hears(place) and self.heard_typing() == 1:
             self._play()
@@ -96,12 +96,21 @@ class TypingSounds:
     def stop(self):
         self._pending_stop = None
         self._generation += 1
-        if self.vc is not None and self.vc.is_playing():
+        if not self.held and self.vc is not None and self.vc.is_playing():
             self.vc.stop()
+
+    def hold(self):
+        self.stop()
+        self.held = True
+
+    def release(self):
+        self.held = False
+        if self.guild is not None and self.heard_typing():
+            self._play()
 
     def _play(self):
         vc = self.vc
-        if vc is None or not self.ffmpeg or not self.path.exists() or not vc.is_connected():
+        if self.held or vc is None or not self.ffmpeg or not self.path.exists() or not vc.is_connected():
             return
         self._generation += 1
         generation = self._generation

@@ -32,6 +32,12 @@ class FakeUser:
     def is_on_mobile(self):
         return False
 
+    async def block(self):
+        self.blocked = True
+
+    async def unblock(self):
+        self.blocked = False
+
     def __repr__(self):
         return self.name
 

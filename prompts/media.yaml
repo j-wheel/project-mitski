@@ -1,0 +1,98 @@
+# images, gifs, videos, stickers, emojis and reactions
+# {name} is filled in by the code (the names each text can use are listed in its comment, or just keep the ones
+# already there). everything else is said as written, json braces too. write {{name}} to say a literal {name}.
+
+# added when she looks at an image
+image_rules: >-
+  If there's text in it (memes, screenshots, captions), quote the important text exactly. If it shows people,
+  describe how they look and what they're doing, but don't guess who they are. If it's sexual or gory, only say that
+  it's nsfw or gore, no details. Write it as a plain, neutral description, like an alt text: no opinions, no "it's
+  cute" or "what a nice picture", no exclamation marks, don't talk to anyone, no intro like "this image shows".
+
+# what she knows about a youtube link. fills in: {who}, {title}, {author}
+youtube_shared: "{who} shared a youtube video: \"{title}\" by {author}."
+
+# fills in: {summary}
+youtube_watched: "You watched it, it's about: {summary}"
+
+# fills in: {description}
+youtube_description: "Its description: {description}"
+
+# picking a sticker
+sticker_system: "You pick stickers for messages in a discord chat."
+
+# fills in: {her}, {text}, {listing}
+sticker: |-
+  {her} just said this in a discord chat:
+  "{text}"
+
+  Which of these stickers would she send right after it?
+  {listing}
+  0. none of them fit
+
+  Answer with only the number.
+
+# picking an emoji reaction
+reaction_system: "You pick emoji reactions for messages in a discord chat."
+
+# fills in: {name}, {text}, {her}
+reaction: |-
+  {name} sent this in a discord chat:
+  "{text}"
+
+  Pick one emoji reaction {her} would add to it.
+
+# fills in: {names}
+reaction_server_emojis: "Server emojis she can use: {names}. She can also use any normal emoji."
+
+reaction_answer: "If nothing fits, write none. Answer with only the emoji."
+
+# followed by the emojis she can use
+emojis_nitro: "Custom emojis you can use (you have nitro, so emojis from any server work):"
+
+emojis_server: "Custom emojis on this server you can use:"
+
+# what she's looking at, for look_closer
+kind_gif: "gif (these are frames from it, in order)"
+
+kind_video: "video (these are frames from it, in order)"
+
+# fills in: {message}
+sent_with: "They sent it with the message: \"{message}\"."
+
+# describing a sticker. fills in: {name}
+sticker_called: "This is a discord sticker called \"{name}\""
+
+# fills in: {n_frames}
+sticker_frames: "These are {n_frames} frames of its animation."
+
+sticker_describe: "In one short sentence, say what it shows and what reaction or emotion it's used for."
+
+# describing a gif. fills in: {n_frames}
+gif_frames: "These are {n_frames} frames from an animated gif, in order (left to right, top to bottom)."
+
+gif: "This is a gif someone sent in a discord chat."
+
+# fills in: {hint}
+gif_link: "Its link calls it \"{hint}\"."
+
+gif_describe: >-
+  In 1 or 2 short factual sentences, say what happens in it and what reaction or mood it's used for.
+
+# describing a video. fills in: {n_frames}, {context}
+video: >-
+  These are {n_frames} frames from a video someone sent in a discord chat, in order (left to right, top to
+  bottom).{context} In 1 or 2 short sentences, say what the video seems to be.
+
+# describing an image
+image: "Someone sent this image in a discord chat."
+
+image_describe: >-
+  Describe what's in it in 1 to 3 short factual sentences. If it's a meme or reaction image, say what the joke is.
+  If it's a screenshot, say what app or game it's from and what matters in it.
+
+# looking closely, when someone asks about it. fills in: {kind}, {question}
+look_closer: >-
+  Someone in a discord chat asked about this {kind}: "{question}". Look at it carefully and answer what they asked.
+  If they want it described or explained, describe it properly: what's in it, what's happening, any text in it word
+  for word, and what the joke or point is if there is one. 3 to 5 sentences.

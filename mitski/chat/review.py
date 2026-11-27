@@ -5,6 +5,7 @@ from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.metrics import Metrics
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 
 log = logs.get("review")
 
@@ -12,10 +13,7 @@ log = logs.get("review")
 class DraftReview(Component):
     async def answer_all(self, turns, persona, notes, things, channel, others, seen, first):
         asked = " / ".join(f'"{cut(t.text, 120)}"' for t in things)
-        must = (
-            f"You skipped some of their questions: {asked}. Answer them now, the way you'd text it, a short line "
-            f"each (one line can cover two). Your own words: never repeat or copy what they said."
-        )
+        must = say("chat.skipped_questions", asked=asked)
         text = await self.llm.generate(
             self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must),
             temperature=min(self.cfg.TEMPERATURE, 0.6),
@@ -25,11 +23,6 @@ class DraftReview(Component):
         return lines if len(lines) > len(first) and not self.app.drafts.problem(lines, seen, channel=channel) else first
 
     async def match_answers(self, lines, things):
-        """Which message each line answers, None for a line that answers none of them (like "hey anna!").
-
-        She doesn't answer in the order they asked, skips things, and sends extra lines, so none of it can be assumed.
-        Returns None unless it's clear, and then the caller doesn't aim at any one message.
-        """
         n, count = len(things), len(lines)
         schema = {
             "type": "object",
@@ -47,11 +40,8 @@ class DraftReview(Component):
         asked = "\n".join(f"{i}. {cut(t.text, 160)}" for i, t in enumerate(things, 1))
         said = "\n".join(f"- {cut(ln, 160)}" for ln in lines)
         out = await self.app.helper.ask_json(
-            'You match replies in a chat to the questions they answer. Answer with JSON: {"answers": [numbers]}.',
-            f"Questions:\n{asked}\n\nReplies, in order:\n{said}\n\nFor each reply, in order, the number of the "
-            f"question it answers. 0 if it doesn't answer any of them, like a greeting or a remark. A short reply can "
-            f'still be an answer: "cs2" answers what game they play, "portugal" answers where they live. A reply can '
-            f"be about the same question as another one, and a question doesn't have to be answered at all.",
+            wording("chat.match_answers_system"),
+            say("chat.match_answers", asked=asked, said=said),
             schema,
             20 + 6 * count,
         )
@@ -80,9 +70,6 @@ class DraftReview(Component):
         ]
 
     async def check(self, lines, anchor, msgs, around, always=False):
-        """Whether her draft fits the message it's for. With several people around it also says whose message it
-        really answers. always: check it even one on one, where the only way to miss is a reply that doesn't
-        follow from what they said at all ("hii everyone" to a question)."""
         pool = sorted({m.id: m for m in list(msgs)[-12:] + list(around) + [anchor]}.values(), key=lambda m: m.id)[-15:]
         if anchor not in pool:
             pool = pool[1:] + [anchor]
@@ -138,11 +125,7 @@ class DraftReview(Component):
 
     async def refocus(self, turns, persona, notes, anchor, burst, thought, channel, others, seen):
         name = self.messages.call(anchor.author)
-        must = (
-            f'Reply to {name} now, to what {name} said: "{cut(self.app.addressing.burst_text(burst), 240)}". Answer {name}\'s message, '
-            f"not anyone else's, and not something you already answered. If {name} is reacting to something you said, "
-            f"it was you who said it (see what you said lately above): own it, don't flip it around."
-        )
+        must = say("chat.refocus", name=name, message=cut(self.app.addressing.burst_text(burst), 240))
         text = await self.llm.generate(
             self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must), temperature=min(self.cfg.TEMPERATURE, 0.7)
         )
@@ -159,7 +142,7 @@ class DraftReview(Component):
 
     async def make_her_answer(self, turns, persona, notes, thought, target, msgs, channel, others, seen, first, mode):
         name = self.messages.call(target.author)
-        must = f"Answer {name} now, in your own words: {thought.brief.rstrip('.')}."
+        must = say("chat.answer_now", name=name, answer=thought.brief.rstrip("."))
         prompt = self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must)
         text = await self.llm.generate(
             prompt,
@@ -185,18 +168,19 @@ class DraftReview(Component):
         )
         out = await self.llm.generate(
             self.llm.fmt.instruct(
-                f"You write {her}'s next message in a discord chat, exactly in her style: "
-                f"{self.app.policy.tamed(channel, self.cfg.PERSONA)} It's a casual chat message, so it never sounds "
-                f"like an assistant. {self.app.policy.reminder(channel)}",
-                f"Recent chat:\n{recent}\n\n"
+                say(
+                    "chat.rewrite_system",
+                    her=her,
+                    persona=self.app.policy.tamed(channel, self.cfg.PERSONA),
+                    safe_reminder=self.app.policy.reminder(channel),
+                ),
+                (say("chat.rewrite_recent", recent=recent) + "\n\n")
                 + (
-                    "How she types (her own recent messages):\n" + "\n".join(f"- {e}" for e in examples) + "\n\n"
+                    (wording("chat.rewrite_examples") + "\n") + "\n".join(f"- {e}" for e in examples) + "\n\n"
                     if examples
                     else ""
                 )
-                + f"Write her reply to {name}. It has to tell them this: {thought.brief}\n"
-                f"She's the one talking, so she says i, me and my about herself, never {her} or she/her. "
-                f"1 or 2 short, casual lines, like her examples. {self.cfg.STYLE_NOTE} Just the message, nothing else.",
+                + say("chat.rewrite_task", name=name, answer=thought.brief, her=her, style=self.cfg.STYLE_NOTE),
             ),
             temperature=0.7,
             n_predict=120,

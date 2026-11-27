@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from mitski.core import logs
+from mitski.core.texts import fill, say, wording
 
 log = logs.get("clock")
 
@@ -34,22 +35,23 @@ class Clock:
 
 def time_phrase(now):
     h = now.hour
+    words = wording("chat.time_of_day")
     part = (
-        "in the middle of the night"
+        words["night"]
         if h < 5
-        else "early in the morning"
+        else words["early_morning"]
         if h < 8
-        else "in the morning"
+        else words["morning"]
         if h < 11
-        else "around midday"
+        else words["midday"]
         if h < 14
-        else "in the afternoon"
+        else words["afternoon"]
         if h < 18
-        else "in the evening"
+        else words["evening"]
         if h < 22
-        else "late at night"
+        else words["late_night"]
     )
-    return f"It's {now.strftime('%A')} {part} ({now.strftime('%H:%M')})."
+    return say("chat.time_now", day=now.strftime("%A"), part=part, time=now.strftime("%H:%M"))
 
 
 def per_tick(p_hour, seconds):
@@ -58,16 +60,17 @@ def per_tick(p_hour, seconds):
 
 
 def ago(t, now):
+    words = wording("chat.ago")
     s = now - t
     if s < 3600:
-        return "just now" if s < 600 else "earlier"
+        return words["just_now"] if s < 600 else words["earlier"]
     if s < DAY:
-        return "today"
+        return words["today"]
     n = int(s // DAY)
     if n == 1:
-        return "yesterday"
+        return words["yesterday"]
     if n < 14:
-        return f"{n} days ago"
+        return fill(words["days"], n=n)
     if n < 60:
-        return f"{n // 7} weeks ago"
-    return f"{n // 30} months ago"
+        return fill(words["weeks"], n=n // 7)
+    return fill(words["months"], n=n // 30)

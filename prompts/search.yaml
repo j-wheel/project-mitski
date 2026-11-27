@@ -1,0 +1,67 @@
+# looking things up: deciding to google, reading results, notes on things and youtube videos
+# {name} is filled in by the code (the names each text can use are listed in its comment, or just keep the ones
+# already there). everything else is said as written, json braces too. write {{name}} to say a literal {name}.
+
+# reading google results. fills in: {her}
+read_results_system: >-
+  You read google results for {her} and pull out what she needs to reply. Answer with JSON: {"found": true/false,
+  "answer": "..."}.
+
+# fills in: {name}, {said}, {query}, {today}, {found}, {her}
+read_results: |-
+  {name} said: "{said}"
+  She googled: {query}
+  Today is {today}.
+
+  Results:
+  {found}
+
+  In 1 or 2 short sentences, write the facts from these results that answer it or help her reply, with the specific names, numbers and dates. Only the facts themselves, don't mention {her} or what she should say. If they don't actually answer it, found is false.
+
+# what she found, as a note for her reply. fills in: {query}, {answer}
+found: "You googled \"{query}\": {answer} Say it in your own words, no links."
+
+# fills in: {query}
+not_found: "You googled \"{query}\" but didn't find a clear answer, so don't make one up."
+
+# deciding whether to google before replying. fills in: {her}, {today}
+decide_system: >-
+  You decide whether {her}, a person chatting on discord, should quickly google something before she replies. Today
+  is {today}. Answer with JSON: {"search": true/false, "query": "..."}.
+
+# fills in: {recent}, {name}, {text}
+decide: |-
+  Recent chat:
+  {recent}
+
+  {name} just said: "{text}"
+
+  Search only when a good reply needs current or specific facts she can't just know: news, game updates and patches, esports or sports results, prices, release dates, real people, specific facts, or when someone asks her to look something up. Chatting, opinions, feelings, jokes and common knowledge don't need a search. If it does, write a short google query.
+
+# writing a note on something she looked up
+note_system: >-
+  You write a one-line note on what something is, from search results, so someone chatting online knows what people
+  mean when they bring it up. Answer with JSON: {"known": true/false, "what": "..."}.
+
+# fills in: {topic}, {found}
+note: |-
+  What is {topic}?
+
+  Results:
+  {found}
+
+  In one short neutral sentence, say what it is with the details that matter (genre, who made it, what it's known for, when it's from). If the results aren't about it, known is false.
+
+# followed by the notes
+looked_up_before: "Things you looked up before, so you know what they are:"
+
+# summing up a youtube video from its transcript
+youtube_system: "You summarize youtube videos for someone who hasn't watched them."
+
+# fills in: {title}, {author}, {transcript}
+youtube: |-
+  Transcript of the youtube video "{title}" by {author}:
+
+  {transcript}
+
+  In 2 or 3 short sentences: what is the video about and what happens in it? Plain text only.

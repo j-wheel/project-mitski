@@ -5,8 +5,6 @@ from mitski.vision.service import sticker_description
 
 
 class MessageSticker:
-    """Like discord's StickerItem: no description until it's fetched."""
-
     def __init__(self, description):
         self.fetched = 0
         self._description = description

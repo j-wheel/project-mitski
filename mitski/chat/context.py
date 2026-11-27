@@ -6,6 +6,7 @@ import discord
 
 from mitski.chat.messages import short_name
 from mitski.core.component import Component
+from mitski.core.texts import say, wording
 
 HISTORY_FRESH_SEC = 8.0
 
@@ -29,9 +30,6 @@ class ContextBuilder(Component):
         self.fetched = {}
 
     async def recent_history(self, channel, limit):
-        """The channel's newest messages, newest first. A fetch from a few seconds ago is used again as long as
-        nothing new came in since (discord tells us the newest message id), so reading the chat twice for one reply
-        costs one request."""
         now = time.monotonic()
         newest = getattr(channel, "last_message_id", None)
         hit = self.fetched.get(channel.id)
@@ -94,11 +92,11 @@ class ContextBuilder(Component):
                     )
                     if parent is not None and parent.author.id != m.author.id:
                         note = (
-                            " (replying to you)"
+                            (" " + wording("chat.replying_to_you"))
                             if parent.author.id == self.me.id
-                            else " (replying to someone)"
+                            else (" " + wording("chat.replying_to_someone"))
                             if parent.author.id in self.cfg.ignored
-                            else f" (replying to {self.messages.call(parent.author)})"
+                            else (" " + say("chat.replying_to", name=self.messages.call(parent.author)))
                         )
                 text = f"{self.messages.call(m.author)}{note}: {text}"
             if turns and turns[-1][0] == role:

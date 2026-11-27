@@ -4,6 +4,7 @@ from mitski.chat.messages import short_name
 from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 from mitski.memory import activity
 
 log = logs.get("presence")
@@ -40,13 +41,13 @@ def game_name(a):
 def describe_activity(a):
     t = getattr(a, "type", None)
     if is_spotify(a):
-        return f'listening to "{a.title}" by {a.artist} on spotify'
+        return say("chat.activity_spotify", title=a.title, artist=a.artist)
     if t == discord.ActivityType.custom:
         text = (
             next((x for x in (getattr(a, "state", None), getattr(a, "name", None)) if x and x != "Custom Status"), "")
             or ""
         )
-        return f'has their status set to "{cut(text.strip(), 80)}"' if text.strip() else None
+        return say("chat.activity_custom", status=cut(text.strip(), 80)) if text.strip() else None
     if t == discord.ActivityType.streaming:
         what = game_name(a)
         return f"streaming {what}" if what else "streaming"
@@ -95,9 +96,10 @@ VERBS = {"playing": "playing", "watching": "watching", "listening": "listening t
 
 class Profiles(Component):
     def current_activity(self):
-        status = self.app.owner.status
-        if status is not None:
-            return status.get("type") or "", status.get("text") or ""
+
+        game = self.app.routine.game_now() if self.cfg.ACTIVITY_FROM_ROUTINE else None
+        if game is not None:
+            return ("playing", game) if game else ("", "")
         return str(self.cfg.ACTIVITY_TYPE or "").lower(), self.cfg.ACTIVITY_TEXT or ""
 
     async def apply(self):
@@ -116,8 +118,8 @@ class Profiles(Component):
         return " ".join(
             line
             for line in (
-                f"Your discord status says you're {verb} {text}." if verb and text else "",
-                f'The custom status under your name says "{custom[0]}".' if custom else "",
+                say("chat.own_activity", verb=verb, text=text) if verb and text else "",
+                say("chat.own_custom_status", status=custom[0]) if custom else "",
             )
             if line
         )
@@ -133,26 +135,26 @@ class Profiles(Component):
         bits = []
         acts = [d for d in (describe_activity(a) for a in (m.activities or ())) if d]
         if acts:
-            bits.append(f"Right now {name} is " + ", and ".join(acts[:3]) + ".")
+            bits.append((say("chat.right_now", name=name) + " ") + ", and ".join(acts[:3]) + ".")
             known = (
                 activity.right_now(self.memory.get(m.id), doing_now(m), self.app.tracker, m.id)
                 if self.cfg.MEMORY
                 else []
             )
             if known:
-                bits.append("About that: " + "; ".join(known) + ".")
+                bits.append((wording("chat.about_that") + " ") + "; ".join(known) + ".")
         if m.status not in (discord.Status.offline, discord.Status.invisible) and m.is_on_mobile():
-            bits.append(f"{name} is on their phone.")
+            bits.append(say("chat.on_phone", name=name))
         if guild is not None and isinstance(m, discord.Member):
             roles = [r.name for r in reversed(m.roles) if not r.is_default() and not r.managed][:3]
             if roles:
-                bits.append(f"Their roles here: {', '.join(roles)}.")
+                bits.append(say("chat.their_roles", roles=", ".join(roles)))
             if m.premium_since:
-                bits.append(f"{name} boosts this server.")
+                bits.append(say("chat.boosts", name=name))
             if m.joined_at and (now - m.joined_at).days < 7:
-                bits.append(f"{name} only joined this server recently.")
+                bits.append(say("chat.joined_recently", name=name))
         if (now - m.created_at).days < 30:
-            bits.append(f"{name}'s discord account is brand new.")
+            bits.append(say("chat.new_account", name=name))
         return " ".join(bits)
 
     def track(self, before, after):

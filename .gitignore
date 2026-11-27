@@ -1,3 +1,4 @@
+# python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -7,17 +8,44 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
-.claude/
-*.tmp
 
+# editors, os and local tools
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+*.log
+.env
+.env.*
+
+# her config: settings, token and keys, paths on this pc
 config/mitski.yaml
 config/keys.yaml
-training/config/
+config/paths.yaml
 config/*.bak
-data/
+training/config/
+
+# her data: memory, mood, routine, caches, exports, training data (and old copies of it)
+/data/
+/data*/
+results*.json
+
+# media and models
 mp3/
 models/
+vmodel/
 llama.cpp/
-out_mitski*/
 *.gguf
-results*.json
+*.safetensors
+*.pth
+*.ckpt
+*.onnx
+*.index
+
+# training output
+out_mitski*/
+unsloth_compiled_cache/

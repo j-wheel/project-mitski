@@ -25,12 +25,10 @@ SENTENCE_END = re.compile(r"[.!?…](?=\s|$)")
 
 
 def tokens_guess(text):
-    """A cautious guess (chat text with emojis and slang runs short of 4 characters a token)."""
     return int(len(text or "") / CHARS_PER_TOKEN) + 1
 
 
 def stopped_at_limit(data, n=None):
-    """Whether llama-server stopped because it ran out of tokens, not because the answer was done."""
     if not isinstance(data, dict):
         return False
     if "stop_type" in data or "stopped_limit" in data:
@@ -39,8 +37,6 @@ def stopped_at_limit(data, n=None):
 
 
 def drop_unfinished(text):
-    """What's left of an answer that got cut off: the lines before the cut one, or the whole sentences of a single
-    line, never half a sentence."""
     lines = [ln for ln in (text or "").rstrip().split("\n") if ln.strip()]
     if len(lines) > 1:
         return "\n".join(lines[:-1])
@@ -100,8 +96,6 @@ class LlamaClient(Component):
         return self.cfg.llm_url
 
     def prompt(self, turns, persona=None, notes=None, reopen=False, n_predict=None):
-        """Her chat prompt. If it wouldn't fit the model's context with room for the answer, the oldest messages
-        are left out (never her persona or notes), so llama-server never has to cut it somewhere random."""
         persona = persona or self.cfg.PERSONA
         text = self.fmt.chat(persona, turns, notes, reopen=reopen)
         room = self.room(n_predict or self.cfg.MAX_TOKENS)
@@ -119,11 +113,9 @@ class LlamaClient(Component):
         return text
 
     def room(self, n_predict):
-        """Tokens a prompt can take with n_predict left for the answer, None if the context size isn't known."""
         return self.info.n_ctx - n_predict - CTX_MARGIN if self.info.n_ctx else None
 
     def room_chars(self, reserved_tokens, default):
-        """How many characters of chat fit next to reserved_tokens of instructions and answer."""
         room = self.room(reserved_tokens)
         return default if room is None else max(2000, min(default, int(room * CHARS_PER_TOKEN)))
 
@@ -211,7 +203,6 @@ class LlamaClient(Component):
         return data if raw else data.get("content", "")
 
     def _slow(self, took, data, kind):
-        """A call that took a long time, with llama-server's own numbers, so it's clear what was slow."""
         t = data.get("timings") or {} if isinstance(data, dict) else {}
         prompt_n, prompt_rate = int(t.get("prompt_n") or 0), float(t.get("prompt_per_second") or 0)
         made_n, made_rate = int(t.get("predicted_n") or 0), float(t.get("predicted_per_second") or 0)

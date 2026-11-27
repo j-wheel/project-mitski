@@ -6,7 +6,6 @@ import discord
 from mitski.chat.messages import NORMAL_TYPES, short_name
 from mitski.core import logs
 from mitski.core.component import Component
-from mitski.social.away import UNQUIET
 
 log = logs.get("router")
 
@@ -22,8 +21,6 @@ class MessageRouter(Component):
         if self.cfg.LOG_CHANNEL and msg.channel.id == self.cfg.LOG_CHANNEL:
             return
         is_dm = isinstance(msg.channel, discord.DMChannel)
-        if self.app.owner.is_owner(msg.author):
-            self.app.owner.seen(short_name(msg.author))
         if is_dm:
             self.state.dm_unanswered.discard(msg.author.id)
             self.app.voice.heard_in_dm(msg)
@@ -40,8 +37,6 @@ class MessageRouter(Component):
         return self.me is not None and author.id != self.me.id
 
     def catch_up(self, msg, age):
-        """A dm that came in while she was offline: answered like a new one, but it's allowed to be old, and she
-        knows she's only just seeing it."""
         self.app.pipeline.missed[msg.id] = age
         self._reply(msg, "dm")
 
@@ -76,27 +71,12 @@ class MessageRouter(Component):
         self._overheard(msg, key)
 
     async def _past_away_gate(self, msg):
-        guild, away = msg.guild, self.app.away
-        state = away.state(guild.id)
-        if not state:
-            return True
-        if not (self.app.owner.is_owner(msg.author) and self.app.addressing.talks_to_her(msg)):
-            return False
-        if state == "asleep":
-            await self.app.sleep.wake_for(guild, msg.author)
-            return True
-        if UNQUIET.search(msg.content or ""):
-            away.unquiet(guild.id)
-            log.info("%s said she can talk again in %s", msg.author, guild.name)
-            await self.app.relay.post(f"**not quiet anymore** in {guild.name}")
-            return True
-        self.app.pipeline.queue(msg.channel, "direct", msg)
-        return False
+        return not self.app.away.state(msg.guild.id)
 
     def _overheard(self, msg, key):
         cid = msg.channel.id
         self.state.last_msg_time[key] = time.monotonic()
-        self.state.msg_count[cid] += 3 if self.app.owner.is_owner(msg.author) else 1
+        self.state.msg_count[cid] += 1
         self.memory.overheard(msg.author, msg.content, msg.channel)
         if self.app.ambient.should_join(cid):
             self.app.pipeline.join_in(msg.channel, msg)
@@ -112,6 +92,7 @@ class MessageRouter(Component):
             self.state.last_typing[(channel.id, user.id)] = time.monotonic()
 
     def reaction(self, payload):
+        self.app.reacted.added(payload)
         if payload.guild_id is None or not payload.emoji.is_custom_emoji():
             return
         if (self.me and payload.user_id == self.me.id) or payload.user_id in self.cfg.ignored:

@@ -142,20 +142,6 @@ def test_chatting_keeps_her_around_but_not_forever(routine):
     assert not routine.looking()
 
 
-def test_being_asleep_waits_for_morning_unless_its_the_owner(routine):
-    forced(routine, ASLEEP, "asleep", hours=6)
-    spell = routine.spell()
-    assert routine.notice_at("dm") >= spell.end.timestamp()
-    assert routine.notice_at("ping") >= spell.end.timestamp()
-    assert routine.notice_at("dm", owner=True) <= routine.stamp() + rt.OWNER_MAX_WAIT
-
-
-def test_the_owner_never_waits_long_when_she_is_busy(routine):
-    forced(routine, BUSY)
-    routine.next_look = routine.stamp() + 3000
-    assert routine.notice_at("chat", owner=True) <= routine.stamp() + rt.OWNER_MAX_WAIT
-
-
 def test_presence_follows_the_routine(routine):
     routine.cfg.ROUTINE_PRESENCE = True
     forced(routine, ASLEEP)

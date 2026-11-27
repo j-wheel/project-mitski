@@ -1,6 +1,3 @@
-"""Small, human typos: a neighbouring key, two letters swapped, a missed or a doubled letter. At most one per
-message, never in the first letter of a word, short words, CAPS, links, mentions, emojis or stickers."""
-
 import re
 
 from mitski.chat.style import PROTECT
@@ -27,13 +24,11 @@ NEIGHBOURS = _neighbours()
 
 
 def chance(line, base):
-    """Longer messages are a bit more likely to have one, a two word message hardly ever does."""
     words = len(line.split())
     return max(0.0, min(1.0, base * min(max(words / 6, 0.3), 2.5)))
 
 
 def mistype(word, rng):
-    """One small slip in a word, or None if none of the tries made a believable one."""
     for _ in range(8):
         kind = rng.choices(KINDS, WEIGHTS)[0]
         i = rng.randrange(1, len(word))
@@ -63,7 +58,6 @@ def mistype(word, rng):
 
 
 def add_typo(line, rng):
-    """Puts one typo in a line. Returns (line, (typo, word)), or (line, None) when there's no good word for it."""
     held = [(m.start(), m.end()) for m in PROTECT.finditer(line)]
     words = [
         m
@@ -80,11 +74,9 @@ def add_typo(line, rng):
 
 
 def star(word, rng):
-    """The quick follow-up people send to correct themselves: mostly "*word", sometimes "word*"."""
     return f"{word}*" if rng.random() < 0.15 else f"*{word}"
 
 
 def fix(content, typo, word):
-    """The message with the typo put right, or None if it isn't in there any more."""
     fixed, n = re.subn(rf"(?<![\w']){re.escape(typo)}(?![\w'])", word, content or "", count=1)
     return fixed if n else None

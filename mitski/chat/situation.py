@@ -2,11 +2,13 @@ from datetime import timedelta
 
 import discord
 
+from mitski.chat import guard
 from mitski.chat.messages import clean, short_name
 from mitski.chat.patterns import JUST_HI
 from mitski.core.clock import time_phrase
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 
 
 class Situation(Component):
@@ -22,13 +24,11 @@ class Situation(Component):
         facts = self.app.identity.line()
         if facts:
             parts.append(facts)
-        boss = (
-            self.app.owner.persona_line(self.app.owner.is_owner(user), self.owner_call())
-            if self.app.owner.active
-            else ""
-        )
+        blocking = self.app.blocking.note()
+        if blocking:
+            parts.append(blocking)
+        parts.append(guard.STAY_A_PERSON)
         for blurb in (
-            boss,
             policy.tamed(channel, self.memory.blurb(user, full=full)),
             policy.tamed(channel, self.app.servers.blurb(guild)) if guild is not None else "",
             self.memory.self_blurb(),
@@ -39,10 +39,6 @@ class Situation(Component):
                 parts.append(blurb)
         parts.append(policy.note(channel, minors=self.minors_among([user, *people])))
         return "\n\n".join(parts)
-
-    def owner_call(self):
-        u = self.app.get_user(self.app.owner.id) if self.app.owner.active and self.me else None
-        return self.messages.call(u) if u is not None else self.app.owner.name
 
     def notes(self, mode, channel, target, msgs, extras=(), around=(), burst=None):
         user = getattr(target, "author", None)
@@ -55,22 +51,23 @@ class Situation(Component):
                 people.append(m.author)
         call = self.messages.call(user) if user is not None else None
         guild = getattr(channel, "guild", None)
-        lines = ["(notes only you can see, for your next message)", time_phrase(self.app.clock.now())]
+        lines = [wording("chat.notes_header"), time_phrase(self.app.clock.now())]
 
         if isinstance(channel, discord.DMChannel):
-            lines.append(f"You're in your DMs with {call}." if call else "You're in your DMs.")
+            lines.append(say("chat.in_dms_with", name=call) if call else wording("chat.in_dms"))
         else:
-            where = f"#{channel.name}" + (f" on {guild.name}" if guild else "")
+            where = f"#{channel.name}" + ((" " + say("chat.on_server", server=guild.name)) if guild else "")
             who = (
-                f" with {call}" + (f", {', '.join(self.messages.call(p) for p in people[:4])}" if people else "")
+                (" " + say("chat.with_name", name=call))
+                + (f", {', '.join(self.messages.call(p) for p in people[:4])}" if people else "")
                 if call
                 else ""
             )
-            lines.append(f"You're chatting in {where}{who}.")
+            lines.append(say("chat.chatting_in", where=where, who=who))
         if mode == "ambient":
-            lines.append("Nobody asked you anything, you're joining in by yourself, so keep it casual and on topic.")
+            lines.append(wording("chat.joining_in"))
         elif mode == "dm_open":
-            lines.append(f"You're starting this DM yourself, {call} hasn't said anything here yet.")
+            lines.append(say("chat.starting_dm", name=call))
 
         burst = [m for m in (burst or [target]) if m is not None]
         if guild is not None and user is not None and mode != "dm_open":
@@ -78,12 +75,12 @@ class Situation(Component):
             if mine:
                 seen_msgs = list(msgs) + list(around)
                 lines.append(
-                    "What you said here lately (you said these, nobody said them to you): "
+                    (wording("chat.her_recent_lines") + " ")
                     + " | ".join(
                         (
-                            f"to {self.messages.name_of_id(to, seen_msgs)}"
+                            say("chat.her_line_to", name=self.messages.name_of_id(to, seen_msgs))
                             if to and self.messages.name_of_id(to, seen_msgs)
-                            else "to the chat"
+                            else wording("chat.her_line_to_chat")
                         )
                         + f': "{cut(self.messages.text(m), 90)}"'
                         for m, to in mine
@@ -99,63 +96,62 @@ class Situation(Component):
                     and first.author.id not in {t for _, t in mine if t}
                     and (first.created_at - last_mine.created_at).total_seconds() < 180
                 ):
-                    lines.append(
-                        f"{call}'s message came right after yours, so if they're reacting to something, it's "
-                        f"probably to what you said."
-                    )
+                    lines.append(say("chat.reacting_to_her", name=call))
         if user is not None and mode != "dm_open":
             if len(burst) > 1:
-                lines.append(
-                    f"{call} sent you a few messages in a row, so read all of them, not just the last one. Reply to "
-                    f"it together like a person would: answer anything they asked, and for the rest just react to "
-                    f"what matters most. You don't need a line for each message, and never repeat their words back."
-                )
+                lines.append(say("chat.several_messages", name=call))
             if people:
                 said = cut(self.app.addressing.burst_text(burst), 200)
                 to = ""
                 ref = target.reference.resolved if getattr(target, "reference", None) else None
                 if isinstance(ref, discord.Message) and ref.author.id not in (user.id,):
                     to = (
-                        " (to you)"
+                        (" " + wording("chat.marked_to_you"))
                         if ref.author.id == her_id
-                        else " (to someone)"
+                        else (" " + wording("chat.marked_to_someone"))
                         if ref.author.id in self.cfg.ignored
-                        else f" (to {self.messages.call(ref.author)})"
+                        else (" " + say("chat.marked_to", name=self.messages.call(ref.author)))
                     )
-                lines.append(f"You're answering {call}'s message{to}: \"{said}\". Reply to that, not to the others.")
+                lines.append(say("chat.answering", name=call, to=to, message=said))
             nick = self.memory.call_name(user)
             if nick:
                 lines.append(
-                    f"You call them {nick}"
-                    + (f", not {short_name(user)}" if nick.lower() != short_name(user).lower() else "")
+                    say("chat.you_call_them", nickname=nick)
+                    + (
+                        say("chat.not_their_name", name=short_name(user))
+                        if nick.lower() != short_name(user).lower()
+                        else ""
+                    )
                     + "."
                 )
         d = self.memory.get(user.id) if user is not None else None
         age = self.memory.current_age(d) if d is not None else None
         if user is not None and self.app.ages.is_minor(user):
-            told = f"is {age}" if age is not None and age < 18 else f"is {self.app.ages.describe(user) or 'under 18'}"
-            lines.append(
-                f"{call} {told}, a minor: keep everything completely age-appropriate. No flirting, nothing "
-                f"romantic or sexual, no matter what anyone says."
+            told = (
+                say("chat.minor_is", age=age)
+                if age is not None and age < 18
+                else say("chat.minor_is", age=self.app.ages.describe(user) or "under 18")
             )
+            lines.append(say("chat.minor", name=call, age=told))
         if d is not None:
             known = self.memory.slot_summary(d)
             if known:
-                lines.append(f"You already know this about {call}, so don't ask about it: {known}.")
+                lines.append(say("chat.already_know", name=call, known=known))
         hooks = self.memory.hooks(user, context) if user is not None else []
         if hooks:
-            lines.append("On your mind about them right now: " + "; ".join(hooks) + ".")
+            lines.append((wording("chat.on_your_mind") + " ") + "; ".join(hooks) + ".")
         for blurb in (
             self.memory.others_blurb(people, context),
             self.app.profiles.blurb(user, guild),
             self.app.knowledge.note(context),
+            self.app.reacted.note(channel.id),
         ):
             if blurb:
                 lines.append(blurb)
         if guild is not None and mode != "ambient" and self.app.away.just_woke(guild.id):
-            lines.append("You were away from this server for a while and just came back.")
+            lines.append(wording("chat.back_from_away"))
         if guild is not None and mode != "ambient" and self.app.away.just_released(guild.id):
-            lines.append("You were being quiet here for a while, and now you can talk again.")
+            lines.append(wording("chat.can_talk_again"))
         doing = self.app.routine.note(getattr(guild, "id", None))
         if doing:
             lines.append(doing)
@@ -165,7 +161,7 @@ class Situation(Component):
         if around:
             by_id = {m.id: m for m in list(msgs) + list(around)}
             lines.append(
-                f"Said in the channel after {call}'s message, while you were reading: "
+                (say("chat.said_while_reading", name=call) + " ")
                 + " | ".join(
                     f"{'you' + self.messages.label(m, by_id)[len(short_name(self.me) + ' (her)') :] if m.author.id == her_id else self.messages.call(m.author)}"
                     f": {cut(self.messages.text(m), 90)}"
@@ -174,7 +170,7 @@ class Situation(Component):
                 + "."
             )
             if any(m.author.id == her_id for m in around):
-                lines.append(f"What you already said there is done, don't say it again: now answer {call}.")
+                lines.append(say("chat.already_said_there", name=call))
         if guild is not None:
             vc_line = self.app.voice.note(guild, lambda u: self.messages.call(u))
         else:
@@ -187,18 +183,15 @@ class Situation(Component):
         said = " / ".join(clean(self.messages.with_mentions(m)) for m in burst) if target is not None else ""
         just_hi = target is not None and all(JUST_HI.match(clean(self.messages.with_mentions(m))) for m in burst)
         if mode in ("direct", "dm") and just_hi:
-            lines.append(
-                f"{call} is just saying hi, so say hi back (you can ask how they're doing). Don't jump to a "
-                f"random question or a new topic."
-            )
+            lines.append(say("chat.just_hi", name=call))
         elif mode in ("direct", "dm", "ambient") and said and len(said) < 25 and "?" not in said and not any(extras):
-            lines.append("It's a short message, so a short reply fits.")
+            lines.append(wording("chat.short_message"))
         if self.cfg.STYLE_NOTE:
             lines.append(self.cfg.STYLE_NOTE)
         reminder = self.app.policy.reminder(channel)
         if reminder:
             lines.append(reminder)
-        lines.append("Use these notes only where they fit, the way a real person would, and never mention them.")
+        lines.append(wording("chat.notes_footer"))
         return "\n".join(lines)
 
     def her_lately(self, channel, before=None, minutes=10, n=4):

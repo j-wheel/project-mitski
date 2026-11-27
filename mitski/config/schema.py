@@ -72,6 +72,12 @@ SECTIONS = (
         (
             Option("ACTIVITY_TYPE", "", "playing, watching, listening, competing, or empty for none"),
             Option("ACTIVITY_TEXT", "", 'activity text, e.g. "Minecraft"'),
+            Option(
+                "ACTIVITY_FROM_ROUTINE",
+                True,
+                'with ROUTINE on, her "playing ..." shows the game her routine has her playing right now (from '
+                "ROUTINE_GAMES) and nothing when she isn't gaming. ACTIVITY_TYPE and ACTIVITY_TEXT are used otherwise",
+            ),
             Option("STATUS", "online", "online, idle, dnd, invisible"),
             Option(
                 "STATUS_AUTO",
@@ -83,20 +89,14 @@ SECTIONS = (
         ),
     ),
     Section(
-        "her owner: the one person she listens to. she treats them like a close friend and never calls them her owner",
+        "commands: who can run them. in chat they're just people to her, she treats them like anyone else",
         (
             Option(
                 "OWNER_ID",
                 0,
-                'discord user id: she does what they ask, follows their standing orders ("stop pinging sam"), and they can tell her to be quiet, change her status or dm someone. the only person who can use the commands (AMOD can use mute and unmute), 0 = nobody can',
+                "discord user id of the only person who can use the commands (AMOD can use mute and unmute). she "
+                "doesn't treat them any differently in chat. 0 = nobody can",
             ),
-            Option(
-                "OWNER_NOTE",
-                "",
-                'who they are to her, e.g. "your best friend, you bicker a lot but you adore them". empty = a default',
-            ),
-            Option("OWNER_CAN_DM", True, "her owner can tell her to dm people"),
-            Option("OWNER_ORDERS_MAX", 15, "standing orders she keeps (data/owner.json), oldest go first"),
             Option(
                 "AMOD",
                 [],
@@ -105,7 +105,7 @@ SECTIONS = (
         ),
     ),
     Section(
-        "away: quiet mode (her owner tells her to be quiet and she goes completely silent in that server) and sleep mode "
+        "away: quiet mode (!quiet: she goes completely silent in a server) and sleep mode "
         "(now and then she goes offline in a server for a couple of hours)",
         (
             Option(
@@ -179,11 +179,12 @@ SECTIONS = (
             Option("ROUTINE_ERRANDS_PER_DAY", [0, 2], "how many of those a day"),
             Option(
                 "ROUTINE_GAMES",
-                ["in a ranked match", "playing games with friends"],
-                "gaming sessions, she checks her phone more often than when she's busy but doesn't join in by herself. "
-                "her model also uses these as the games she plays",
+                ["Minecraft", "Valorant", "Roblox", "Stardew Valley", "League of Legends"],
+                "the games she plays, written the way discord shows them. her day gets gaming sessions of these (she "
+                "checks her phone more often than when she's busy, but doesn't join in by herself), and her playing "
+                "status shows the one she's on",
             ),
-            Option("ROUTINE_GAMES_PER_DAY", [0, 2], "how many of those a day"),
+            Option("ROUTINE_GAMES_PER_DAY", [0, 2], "how many gaming sessions a day"),
             Option("ROUTINE_LOOK_BUSY", [300, 1500], "seconds between looking at her phone while busy"),
             Option("ROUTINE_LOOK_GAMING", [60, 300], "seconds between looking at her phone while gaming"),
             Option("ROUTINE_STAY", [120, 480], "seconds she stays once she looks, and answers what's waiting"),
@@ -243,7 +244,7 @@ SECTIONS = (
                 0.5,
                 "someone asks for something that takes real work (a whole recipe, a guide, homework, code, a long list): "
                 "chance she brushes it off her way, otherwise she gives the gist in a line. never the full thing. less "
-                "with people she likes and her owner, more when she's busy or tired (needs THINKING)",
+                "with people she likes, more when she's busy or tired (needs THINKING)",
             ),
             Option(
                 "PINGS",
@@ -258,17 +259,24 @@ SECTIONS = (
         ),
     ),
     Section(
-        "voice chats: she never talks in vc, she just hangs out there and types in chat. needs "
-        'pip install -U "discord.py-self[voice]" (2.1.0+) and ffmpeg on PATH',
+        'voice chats and calls. needs pip install -U "discord.py-self[voice]" (2.1.0+) and ffmpeg on PATH',
         (
-            Option("VOICE", True, "she sometimes joins voice channels on the servers she chats in"),
+            Option(
+                "VOICE_MODE",
+                "typing",
+                "voice: she joins vc and picks up calls, hears what people say and talks back in her own voice (needs "
+                "tools/voice_server.py running, see the README), and her typing sounds play while she types. typing: "
+                "she joins vc and picks up calls but doesn't talk, only her typing sounds play while she types in chat. "
+                "off: no vc or calls at all, nothing voice related is loaded",
+                choices=("voice", "typing", "off"),
+            ),
             Option(
                 "VOICE_JOIN_CHANCE",
                 0.1,
-                "chance per hour she hops into a vc with people in it (more with people she knows or her owner in it, or right after the chat talked about vc, less late at night)",
+                "chance per hour she hops into a vc with people in it (more with people she knows in it, or right after the chat talked about vc, less late at night)",
             ),
             Option("VOICE_TALK_CHANCE", 0.03, 'chance per message that talks about vc ("hop in vc") that she joins'),
-            Option("VOICE_ASKED_CHANCE", 0.35, "someone asks her to join (or leave) vc. her owner: always"),
+            Option("VOICE_ASKED_CHANCE", 0.35, "someone asks her to join (or leave) vc"),
             Option(
                 "VOICE_CALLS",
                 True,
@@ -291,6 +299,26 @@ SECTIONS = (
                 "in the mp3/ folder: a random part of it plays in vc while she's typing on that server",
             ),
             Option("VOICE_ASMR_VOLUME", 0.5, ""),
+            Option(
+                "VOICE_SERVER_URL", "http://127.0.0.1:5113", "VOICE_MODE voice: where tools/voice_server.py listens"
+            ),
+            Option(
+                "VOICE_SPEAK_PITCH",
+                0,
+                "semitones the rvc model shifts the tts voice by (0 for a female tts voice, about +12 for a male one)",
+            ),
+            Option(
+                "VOICE_SPEAK_VOICE",
+                "af_heart",
+                "kokoro voice the rvc model converts from (af_heart, af_bella, af_nicole, bf_emma ...)",
+            ),
+            Option("VOICE_SPEAK_SPEED", 1.0, "how fast she talks"),
+            Option(
+                "VOICE_SPEAK_CHIME",
+                0.3,
+                "with several people in vc: chance she answers something nobody said to her (she always answers when "
+                "her name comes up or it's just her and one person, and usually when she just spoke)",
+            ),
         ),
     ),
     Section(
@@ -370,8 +398,7 @@ SECTIONS = (
             Option(
                 "LEAVE_ON_READ",
                 0.3,
-                "chance she leaves small talk on read from people she really doesn't like (never her owner, never "
-                "when they need help)",
+                "chance she leaves small talk on read from people she really doesn't like (never when they need help)",
             ),
         ),
     ),
@@ -518,7 +545,7 @@ SECTIONS = (
                 "SKIP_LOOKUP_CHANCE",
                 0.25,
                 "chance she doesn't bother googling something she doesn't know and just says so, like anyone would. "
-                "never when they ask her to look it up, and never for her owner",
+                "never when they ask her to look it up",
             ),
             Option(
                 "THINKING",
@@ -715,6 +742,13 @@ SECTIONS = (
                 "she was offline. requests from bots, ignored users and anyone she knows is a minor are left alone",
             ),
             Option("FRIEND_ACCEPT_DELAY", [20, 300], "seconds after a friend request before she accepts it"),
+            Option(
+                "BLOCKING",
+                True,
+                "when she tells someone she's blocking them (and isn't joking), she really blocks them on discord. "
+                "anyone blocked, by her or by hand, is ignored like IGNORE_USERS. never the OWNER_ID account "
+                "(!block / !unblock / !blocked)",
+            ),
         ),
     ),
     Section(
@@ -745,7 +779,7 @@ SECTIONS = (
             Option(
                 "MEMORY_OPTOUT",
                 [],
-                "user ids she keeps no memory about (!forgetme / !rememberme change this live for her owner, edit this list for anyone else)",
+                "user ids she keeps no memory about (!forgetme / !rememberme change this live for whoever has OWNER_ID, edit this list for anyone else)",
             ),
             Option(
                 "MEMORY_RETENTION_DAYS",

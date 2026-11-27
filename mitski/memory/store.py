@@ -7,6 +7,7 @@ import time
 
 from mitski.core import logs, voice
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 from mitski.memory import activity
 from mitski.memory.dates import (
     DAY,
@@ -133,8 +134,6 @@ class PeopleStore:
         return changed
 
     def saw_profile(self, user, profile):
-        """What their discord profile says (bio, pronouns, what accounts they connected), kept with the rest of
-        what she knows about them, so she has a picture of who they are before they've told her much."""
         d = self.get(user.id)
         if not d:
             return
@@ -163,7 +162,7 @@ class PeopleStore:
             bits.append(f"pronouns {p['pronouns']}")
         if p.get("accounts"):
             bits.append("connected " + ", ".join(p["accounts"]))
-        return f"{call}'s discord profile: " + "; ".join(bits) + "." if bits else ""
+        return (say("memory.their_profile", name=call) + " ") + "; ".join(bits) + "." if bits else ""
 
     def mark_dirty(self):
         self.dirty = True
@@ -353,7 +352,7 @@ class PeopleStore:
         if name and " " not in name:
             self._set_slot(d, "real_name", name, "said", changes)
         if changes:
-            self._report(d["name"], changes, " (heard it directly)")
+            self._report(d["name"], changes, " " + wording("memory.slot_heard_directly"))
 
     def _asked_for(self, nick, theirs, her):
         nick = (clean_name(nick) or "").lower()
@@ -384,7 +383,7 @@ class PeopleStore:
                 changes = []
                 self._set_slot(d, "her_nick", nick, "named", changes)
                 if changes:
-                    self._report(d["name"], changes, " (she named them)")
+                    self._report(d["name"], changes, " " + wording("memory.slot_she_named"))
                 return
 
     def _report(self, name, changes, why=""):
@@ -459,16 +458,19 @@ class PeopleStore:
             return s["pronouns"]["v"] if "pronouns" in s else ""
         parts = []
         if "real_name" in s and not short:
-            parts.append(f"real name {s['real_name']['v']}")
+            parts.append(say("memory.slot_real_name", name=s["real_name"]["v"]))
         age = self.current_age(d)
         if age is not None:
-            parts.append(f"{age} years old" + (" (you heard, not sure)" if unsure(s.get("age", {})) else ""))
+            parts.append(
+                say("memory.slot_age", age=age)
+                + ((" " + wording("memory.slot_heard")) if unsure(s.get("age", {})) else "")
+            )
         if "pronouns" in s and not short:
             parts.append(s["pronouns"]["v"])
         if "location" in s:
-            parts.append(f"lives in {s['location']['v']}")
+            parts.append(say("memory.slot_lives_in", place=s["location"]["v"]))
         if "hometown" in s and not short:
-            parts.append(f"originally from {s['hometown']['v']}")
+            parts.append(say("memory.slot_from", place=s["hometown"]["v"]))
         if "relationship" in s:
             parts.append(f"relationship: {s['relationship']['v']}")
         if not short:

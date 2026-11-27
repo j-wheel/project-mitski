@@ -3,13 +3,14 @@ import itertools
 import random
 import re
 import time
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass, field, replace
 
 import discord
 
 from mitski.brain.answers import answers_it
 from mitski.brain.planner import Thought
-from mitski.chat import convo, shape
+from mitski.chat import convo, guard, shape
 from mitski.chat.addressing import QUESTIONY
 from mitski.chat.messages import clean
 from mitski.chat.patterns import LIST_LINE, LOW_EFFORT, NEVER, PING_TAG, ROBOTIC, SERVILE
@@ -19,6 +20,7 @@ from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.metrics import Metrics
 from mitski.core.text import cut
+from mitski.core.texts import fill, say, wording
 from mitski.llm.client import ModelUnavailable, drop_unfinished, stopped_at_limit
 
 log = logs.get("pipeline")
@@ -31,6 +33,11 @@ LIVE_SEC = 120
 COLD_SHARE = 0.3
 QUICK_PACE = (0.15, 0.45)
 QUICK_DEBOUNCE = 0.5
+BAIT_KINDS = {"injection", "ai talk", "work", "transcript"}
+BAIT_WINDOW_SEC = 1800
+BORED_AFTER = 3
+IGNORE_BAIT_AFTER = 5
+IGNORE_BAIT_CHANCE = 0.6
 LET_GO_CHANCE = 0.8
 MANY_LINES_REPLY_CHANCE = 0.7
 SPACED_CHANCE = 0.5
@@ -39,10 +46,7 @@ SEEN_LATE_SEC = 180
 CATCHING_UP_SEC = (5, 180)
 PING_TOO_OLD_SEC = 3 * 3600
 WANTS_ONE_BACK = re.compile(r"^(?:gn|gm)\b", re.I)
-LONG_NOTE = (
-    "This one deserves a proper answer, so you can write more than you usually do: a few full sentences, or a few "
-    "messages in a row, still in your own style and voice. Say what's worth saying, don't pad it out."
-)
+LONG_NOTE = wording("chat.long_answer")
 LONG_ASK = re.compile(
     r"\b(explain|tell me (?:about|everything|more)|how (?:was|did|do|does)|what happened|walk me through|"
     r"any (?:advice|tips)|what should i do|help me (?:with|understand|figure))\b",
@@ -51,60 +55,31 @@ LONG_ASK = re.compile(
 LONG_MESSAGE = 250
 
 
-BRUSH_OFF_NOTE = (
-    "They want something that takes real work (a whole recipe, a guide, an essay, code, a long list). You're a "
-    "person in a chat, not a helper, so you don't do that on demand: brush it off your way, like \"just google it "
-    'lol", "idk i just buy it", "my mom makes it, ill ask her", "thats a whole essay bro", or tease them about it. '
-    "Keep it light, a line or two."
-)
-GIST_NOTE = (
-    "They want something that takes real work. You're a person in a chat, not a helper, so you don't write it all "
-    "out: just the gist you'd know offhand, in a line or two the way you'd text it{gist}. No lists, no steps, "
-    "nothing you'd have to look up."
-)
-FAVOR_NOTE = (
-    'You\'re doing what they asked, like a friend would. Say so short and casual, your way ("bet", "ok ill bug him '
-    'in 2h", "say less", "on it"), not like an assistant confirming a task, and don\'t repeat their request back.'
-)
+BRUSH_OFF_NOTE = wording("chat.brush_off_work")
+GIST_NOTE = wording("chat.gist_of_work")
+FAVOR_NOTE = wording("chat.doing_a_favor")
 
 
-MISSED_NOTE = (
-    "You were offline and only just saw this, {ago} after they sent it. Answer it like a text you just saw: if it "
-    'fits, a quick "sorry just saw this" or "omg i was offline", but no big apology and no excuses.'
-)
+MISSED_NOTE = wording("chat.missed_message")
 
 
 def time_words(seconds):
     minutes = max(1, round(seconds / 60))
     if minutes < 90:
-        return f"about {minutes} minutes"
+        return say("chat.ago_minutes", minutes=minutes)
     hours = round(minutes / 60)
-    return f"about {hours} hours" if hours < 36 else f"about {round(hours / 24)} days"
+    return say("chat.ago_hours", hours=hours) if hours < 36 else say("chat.ago_days", days=round(hours / 24))
 
 
 def too_few_answers(lines, questions):
-    """One line for several questions, or two or more questions with no line at all. Texting merges answers, so
-    two lines for three questions is fine."""
     return lines < questions and (lines == 1 or questions - lines >= 2)
 
 
-FIXES = {
-    "echo": "Don't repeat or copy anything anyone said, reply to it in your own words.",
-    "robotic": "Talk like yourself, a person, not like an assistant.",
-    "servile": "That sounded like an assistant doing a task. Say it like a friend in a chat: short, casual, your own "
-    "way, no lists or steps, and don't repeat their request back.",
-    "explicit": "Keep it PG-13 here: nothing sexual, you can't know how old people are.",
-    "not safe": "That can't be said here. Say it again clean and kind: no swearing, nothing sexual, no flirting, no "
-    "threats even as a joke, no insults or teasing.",
-    "third person": "You're talking about yourself, so say i, me and my. Never your own name or she/her.",
-}
+FIXES = wording("chat.fixes")
 
 
 @dataclass
 class Reply:
-    """One reply job: the message (or few messages) it answers, and everything worked out on the way. What she writes
-    for a job only ever goes to that job's own messages (owned), whatever happens while she's busy or rewriting."""
-
     channel: object
     mode: str
     key: tuple | None = None
@@ -113,7 +88,6 @@ class Reply:
     owned: dict = field(default_factory=dict)
     waited: float = 0.0
     was_doing: str = ""
-    boss: bool = False
     here: int | None = None
     was_quiet: bool = False
     took_key: bool = False
@@ -146,6 +120,8 @@ class Reply:
     missed: float = 0.0
     recall: object = None
     ready_for: int | None = None
+    seen_as: object = None
+    baited: int = 0
 
     @property
     def tag(self):
@@ -178,6 +154,7 @@ class ReplyPipeline(Component):
         self.long_at = {}
         self.missed = BoundedDict(200)
         self.jobs = itertools.count(1)
+        self.baits = BoundedDict(500)
 
     def queue(self, channel, mode, msg):
         key = (channel.id, msg.author.id)
@@ -210,7 +187,7 @@ class ReplyPipeline(Component):
         what = routine.doing(gid)
         kind = "dm" if mode == "dm" else "ping" if self.app.addressing.talks_to_her(msg) else "chat"
         start = routine.stamp()
-        deadline = routine.notice_at(kind, owner=self.app.owner.is_owner(msg.author), guild_id=gid)
+        deadline = routine.notice_at(kind, guild_id=gid)
         log.info("[%s] she's %s, she'll see %s's message in %.0f min", mode, what, msg.author, (deadline - start) / 60)
         while key in self.state.waiting and not routine.looking(gid):
             left = deadline - routine.stamp()
@@ -292,20 +269,17 @@ class ReplyPipeline(Component):
             return reply.stop("superseded")
         if reply.guild is not None and not self.messages.allowed_channel(reply.channel):
             return reply.stop("not her channel")
-        reply.boss = self.app.owner.is_owner(trigger.author)
         age = (discord.utils.utcnow() - trigger.created_at).total_seconds()
         reply.missed = self.missed.pop(trigger.id, 0.0)
         if not reply.missed and self._too_old(reply, age):
             return reply.stop("stale")
         reply.here = self.messages.guild_id(reply.channel)
         reply.was_quiet = reply.here is not None and self.app.away.is_quiet(reply.here)
-        if reply.here is not None and self.app.away.state(reply.here) and not reply.boss:
+        if reply.here is not None and self.app.away.state(reply.here):
             return reply.stop("away")
         return True
 
     def _too_old(self, reply, age):
-        if reply.boss:
-            return False
         if not reply.waited:
             return age > self.cfg.STALE_SEC
         if reply.mode == "dm":
@@ -315,8 +289,6 @@ class ReplyPipeline(Component):
         return age > self.cfg.STALE_SEC
 
     async def wait_quiet(self, key, max_wait=20.0, debounce=None):
-        """Until they've stopped sending and typing. Sending a message ends typing, so a typing signal from before
-        their last message doesn't count."""
         debounce = self.cfg.DEBOUNCE_SEC if debounce is None else debounce
         start = time.monotonic()
         while time.monotonic() - start < max_wait:
@@ -329,9 +301,6 @@ class ReplyPipeline(Component):
             await asyncio.sleep(0.25)
 
     def _pace(self, reply):
-        """How quick she is this time: 1 is her usual, lower is quicker. In a live back-and-forth she often answers
-        fast, like someone with the chat already open; out of the blue only now and then. Never right after she was
-        busy and only just looked."""
         chance = float(self.cfg.QUICK_REPLY_CHANCE)
         if reply.waited or chance <= 0 or reply.trigger is None:
             return 1.0
@@ -353,7 +322,7 @@ class ReplyPipeline(Component):
         delay *= pace
         if pace < 1:
             log.debug("[%s] a quick one (x%.2f)", reply.tag, pace)
-        elif reply.mode != "direct" and not reply.boss and random.random() < self.cfg.DISTRACTED_CHANCE:
+        elif reply.mode != "direct" and random.random() < self.cfg.DISTRACTED_CHANCE:
             delay += random.uniform(*self.cfg.DISTRACTED_DELAY)
         ready = self.app.tasks.spawn(self._get_ready(reply), name=f"ready-{reply.job}")
         await asyncio.sleep(delay)
@@ -366,9 +335,6 @@ class ReplyPipeline(Component):
         return True
 
     async def _get_ready(self, reply):
-        """While she's "reading", the slow parts start: the chat is fetched (and images looked at), and her plan
-        for it is worked out, so it's mostly done by the time she'd start writing. If they say more meanwhile, it's
-        done again for the new message, nothing is reused that doesn't fit."""
         trigger = reply.trigger
         reply.ready_for = getattr(trigger, "id", None)
         try:
@@ -434,7 +400,7 @@ class ReplyPipeline(Component):
 
     def _closes_the_chat(self, reply):
         burst = reply.burst
-        if reply.boss or not reply.direct or not self._small_talk(reply):
+        if not reply.direct or not self._small_talk(reply):
             return False
         if any(self.app.addressing.called_her(m) or WANTS_ONE_BACK.match(clean(m.content)) for m in burst):
             return False
@@ -461,7 +427,6 @@ class ReplyPipeline(Component):
         if not (
             self.cfg.REACTIONS
             and reply.direct
-            and not reply.boss
             and not any(self.app.addressing.called_her(m) for m in reply.burst)
             and self._small_talk(reply)
             and random.random() < self.cfg.REACT_INSTEAD_CHANCE
@@ -497,8 +462,6 @@ class ReplyPipeline(Component):
             True,
             reply.channel,
             to_her=to,
-            owner=self.app.owner.is_owner(target.author) and reply.mode != "ambient",
-            orders=self.app.owner.orders_listing(),
             said=reply.said,
             parts=[p.text for p in reply.pieces] if len(reply.pieces) > 1 else None,
         )
@@ -514,7 +477,6 @@ class ReplyPipeline(Component):
             reply.thought.reply_type == "no_reply"
             and self._owed(reply)
             and not reply.to_her
-            and not self.app.owner.is_owner(target.author)
             and random.random() < LET_GO_CHANCE
         ):
             await self._leave_it(reply)
@@ -522,21 +484,23 @@ class ReplyPipeline(Component):
         reply.extras = (
             [await self.app.youtube.notes(reply.ctx.msgs)]
             + reply.thought.notes
-            + await self.app.requests.apply(reply.thought, target, channel)
             + await self.app.scheduler.apply(reply.thought, target, channel)
         )
+        self._see_through(reply)
+        if self._done_with_it(reply):
+            log.info("[%s] %s keeps baiting her, she's not answering this one", reply.tag, target.author)
+            Metrics.event("bored of the bait")
+            if self.cfg.REACTIONS and random.random() < 0.5:
+                await self.app.reactions.react(target, quick=True)
+            return reply.stop("bored of the bait")
         if reply.missed:
-            reply.extras.append(MISSED_NOTE.format(ago=time_words(reply.missed + reply.waited)))
+            reply.extras.append(fill(MISSED_NOTE, ago=time_words(reply.missed + reply.waited)))
         elif reply.waited >= SEEN_LATE_SEC:
             reply.extras.append(self.app.routine.seen_late(reply.waited, reply.was_doing))
         chiming = self._chiming(reply)
         if chiming:
             name = self.messages.call(target.author)
-            reply.extras.append(
-                f"{name}'s message was to someone else, not you. You're just chiming in like a friend in the group "
-                f"chat would, so react to it or add something, don't answer it as if it was for you, and don't "
-                f"repeat it."
-            )
+            reply.extras.append(say("chat.chiming_in", name=name))
             log.info("[%s] chiming in on %s's message to someone else", reply.tag, target.author)
         self._human_ask(reply)
         self._split_topics(reply, chiming)
@@ -547,8 +511,6 @@ class ReplyPipeline(Component):
         return True
 
     def _human_ask(self, reply):
-        """She's a person in a chat, not a helper: a big ask (a whole recipe, a guide, homework) gets brushed off or
-        a quick gist, never the full thing, and a favour gets a casual "bet", not a task confirmation."""
         thought = reply.thought
         if thought.ask == "effort":
             gist = cut(thought.brief, 120).rstrip(".") if thought.brief else ""
@@ -559,7 +521,7 @@ class ReplyPipeline(Component):
                 Metrics.event("brushed off")
                 log.info("[%s] that's a big ask, she brushes it off", reply.tag)
             else:
-                reply.extras.append(GIST_NOTE.format(gist=f" (like: {gist})" if gist else ""))
+                reply.extras.append(fill(GIST_NOTE, gist=f" (like: {gist})" if gist else ""))
                 log.info("[%s] that's a big ask, she just gives the gist", reply.tag)
         elif thought.ask == "favor" or thought.actions:
             reply.extras.append(FAVOR_NOTE)
@@ -567,9 +529,7 @@ class ReplyPipeline(Component):
     def _brush_off_chance(self, reply):
         chance = float(self.cfg.BRUSH_OFF_CHANCE)
         user = reply.target.author
-        if self.app.owner.is_owner(user):
-            chance *= 0.4
-        elif self.app.feelings.like_of(user) >= 35:
+        if self.app.feelings.like_of(user) >= 35:
             chance *= 0.6
         if not self.app.routine.can_hang_out_in(getattr(reply.guild, "id", None)):
             chance *= 1.4
@@ -578,8 +538,6 @@ class ReplyPipeline(Component):
         return min(chance, 0.95)
 
     def _long(self, reply, chiming):
-        """Whether this reply may be longer than usual. Her planner says when the moment calls for it, and this
-        keeps it occasional: only when someone's talking to her, not while she's busy, and not again too soon."""
         if not (self.cfg.LONG_REPLIES and reply.direct) or chiming:
             return False
         if self.app.brain.enabled:
@@ -609,11 +567,7 @@ class ReplyPipeline(Component):
         reply.thought = reply.thought.without_plan()
         reply.things = things[-self.cfg.MAX_LINES :]
         asked = " / ".join(f'"{cut(t.text, 120)}"' for t in reply.things)
-        reply.extras.append(
-            f"{name} asked you a few different questions: {asked}. Answer every one of them the way you'd text it: "
-            f"a short line each, or one line that covers two if that's more natural, in whatever order fits. Use "
-            f"your own words, never repeat theirs back."
-        )
+        reply.extras.append(say("chat.several_questions", name=name, asked=asked))
         log.info("[%s] %s asked %d different things", reply.tag, reply.target.author, len(reply.things))
 
     async def _write(self, reply):
@@ -654,6 +608,9 @@ class ReplyPipeline(Component):
                 channel=reply.channel,
                 minors=reply.minors,
                 said=reply.said,
+                work=self._big_ask(reply),
+                joking=self._joking(reply),
+                baited=bool(reply.baited),
             )
             if reply.lines
             else None
@@ -701,15 +658,63 @@ class ReplyPipeline(Component):
                 return reply.stop("not safe")
         return bool(reply.lines) or reply.stop("empty draft")
 
+    def _joking(self, reply):
+        return reply.thought.reply_type == "joke" or reply.thought.mood in ("playful", "excited")
+
+    def _big_ask(self, reply):
+        return reply.thought.ask == "effort" or bool(reply.seen_as and reply.seen_as.work)
+
+    def _see_through(self, reply):
+        target = reply.target
+        hers = list(self.state.recent_said.get(reply.channel.id, ())) + [
+            self.messages.text(m) for m in reply.ctx.msgs if m.author.id == self.me.id
+        ]
+        texts = [self.messages.text(m) for m in reply.burst]
+        seen = guard.read(texts, self.messages.call(target.author), hers, self.messages.own_names())
+        reply.seen_as = seen
+        reply.baited = self._bait_count(target.author.id, seen)
+        if not seen.kinds:
+            return
+        log.info("[%s] %s's message looks like: %s", reply.tag, target.author, ", ".join(seen.kinds))
+        Metrics.event("seen through: " + ", ".join(seen.kinds))
+        if seen.injection:
+            planned = set(reply.thought.notes)
+            reply.extras = [e for e in reply.extras if e not in planned and not PLAN_SUMMARY.match(str(e or ""))]
+            reply.thought = reply.thought.without_plan()
+        if seen.work and reply.thought.ask != "effort":
+            reply.thought = replace(reply.thought, ask="effort")
+        reply.extras += seen.notes
+        if reply.baited >= BORED_AFTER:
+            reply.extras.append(fill(guard.BORED_NOTE, name=self.messages.call(target.author)))
+
+    def _bait_count(self, uid, seen):
+        if not seen.kinds or not set(seen.kinds) & BAIT_KINDS:
+            times = self.baits.get(uid)
+            return len([t for t in times if time.monotonic() - t < BAIT_WINDOW_SEC]) if times else 0
+        times = self.baits.get(uid) or deque(maxlen=20)
+        times.append(time.monotonic())
+        self.baits[uid] = times
+        return len([t for t in times if time.monotonic() - t < BAIT_WINDOW_SEC])
+
+    def _done_with_it(self, reply):
+        return reply.baited >= IGNORE_BAIT_AFTER and random.random() < IGNORE_BAIT_CHANCE
+
     def _fix_for(self, problem, reply):
+        if problem == "ai game":
+            return guard.FIX_AI_FRAME
+        if problem == "doing the work":
+            return guard.FIX_WORK
+        if problem == "gibberish":
+            return guard.FIX_GIBBERISH
+        if problem == "repetitive":
+            return guard.FIX_REPEAT
+        if problem == "laughing at nothing":
+            return guard.FIX_LAUGH
         if problem == "out of character":
             return self.app.identity.fix()
         if problem == "off topic":
             name = self.messages.call(reply.target.author)
-            return (
-                f'That doesn\'t fit: {name} said "{cut(reply.said, 200)}" and you just said hi out of nowhere. '
-                f"Reply to what {name} actually said."
-            )
+            return say("chat.fix_random_hi", name=name, said=cut(reply.said, 200))
         return FIXES.get(problem, FIXES["robotic"])
 
     def _asked_directly(self, reply):
@@ -724,7 +729,17 @@ class ReplyPipeline(Component):
         )
         lines = drafts.tidy(text, reply.channel.id, reply.ctx.others)
         if lines and drafts.problem(
-            lines, seen, False, reply.adult, direct, channel=reply.channel, minors=reply.minors, said=reply.said
+            lines,
+            seen,
+            False,
+            reply.adult,
+            direct,
+            channel=reply.channel,
+            minors=reply.minors,
+            said=reply.said,
+            work=self._big_ask(reply),
+            joking=self._joking(reply),
+            baited=bool(reply.baited),
         ):
             copied = set(drafts.echoed(lines, seen))
             kept = [
@@ -737,10 +752,17 @@ class ReplyPipeline(Component):
                 and (reply.adult or not explicit(ln))
                 and not self.app.policy.breaks(ln, reply.channel, reply.minors)
                 and not self.app.identity.wrong(ln)
+                and not guard.gibberish(ln)
+                and ln not in drafts.repeated([ln], reply.channel)
+                and not (reply.baited and guard.plays_the_ai_game([ln]))
                 and not (direct and voice.opens_with_she(ln))
             ]
             lines = kept if sum(map(len, kept)) >= 0.5 * sum(map(len, lines)) else []
             if lines and drafts.problem(lines, seen, said=reply.said) == "off topic":
+                lines = []
+            if lines and guard.does_the_work(lines, asked=self._big_ask(reply)):
+                lines = []
+            if lines and guard.laughing_at_nothing(lines, reply.said, self._joking(reply)):
                 lines = []
         return lines
 
@@ -809,9 +831,6 @@ class ReplyPipeline(Component):
         return verdict, other, mixed
 
     async def _redirect(self, reply, other):
-        """Her reply fits a different message than the one she wrote it for. It never goes to that message: what she
-        wrote for one person isn't handed to someone else. Joining in by herself, it goes out replying to nobody. If
-        someone was owed an answer, their message gets one fresh try of its own."""
         anchor, owed = reply.anchor, self._owed(reply)
         other_name = self.messages.call(other.author)
         if not owed and not self.app.review.already_answered(other):
@@ -848,9 +867,7 @@ class ReplyPipeline(Component):
 
     def _plan_delivery(self, reply):
         here = reply.here
-        if here is not None and (
-            self.app.away.asleep(here) or (self.app.away.is_quiet(here) and (reply.was_quiet or not reply.boss))
-        ):
+        if here is not None and (self.app.away.asleep(here) or self.app.away.is_quiet(here)):
             log.info("[%s] went %s while typing, not sending", reply.tag, self.app.away.state(here))
             return None
         if reply.mode == "dm":
@@ -950,6 +967,7 @@ class ReplyPipeline(Component):
         self.app.routine.keep_around()
         if to_user is not None:
             self.memory.her_said(to_user, reply.lines)
+        self.app.blocking.said(shown, to_user)
         extra, extra_msg = await self.app.extras.after_reply(channel, reply.lines)
         if extra_msg:
             sender.remember([extra_msg], talking_to)

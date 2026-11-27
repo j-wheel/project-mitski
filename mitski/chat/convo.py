@@ -1,6 +1,8 @@
 import random
 import re
 
+from mitski.core.texts import say, wording
+
 
 class Delivery:
     def __init__(self, kind="plain", msg=None, user=None, at_end=False, why="", reply_ping=None):
@@ -78,28 +80,8 @@ CHECK = {
 def check_request(her, numbered, draft, meant, meant_label):
     chat = "\n".join(f"[{i}] {label}: {text}" for i, (label, text) in enumerate(numbered, 1))
     who = meant_label.split(" (")[0]
-    system = (
-        "You check messages in a discord group chat before they're sent: does a reply fit the message it's "
-        "meant for, and does it get the chat right? Answer with JSON: "
-        '{"fits": true/false, "to": number, "mixed_up": true/false}.'
-    )
-    user = (
-        f"The chat, oldest first:\n{chat}\n\n"
-        f'{her} is replying to [{meant}] ({who}). Her reply:\n"{draft}"\n\n'
-        f"fits: true if it works as {her}'s reply to [{meant}]: it answers it, reacts to it, jokes about it, or "
-        f'just carries on her chat with {who}. Short or vague replies ("lol", "fr", "wait what", an '
-        f'emoji) fit. Telling {who} ABOUT someone else or about what she said to someone else fits too ("i just '
-        f'said that to tom", "he started it"): what counts is who she\'s talking TO, not who she mentions. '
-        f"false ONLY if it clearly answers or reacts to a different message instead: it answers someone else's "
-        f"question, it reacts to what someone else said instead of to [{meant}], or it talks to someone else by "
-        f"name.\n"
-        f"to: when fits is false, the number of the message it really answers, or 0 if it's a remark to the whole "
-        f"chat. When fits is true, {meant}.\n"
-        f"mixed_up: true only if her reply clearly gets the chat above wrong about who said or did what: it says "
-        f'someone said something to her that she said herself (look at the lines marked "(her)"), or the other '
-        f"way round, or it says something happened in the chat that didn't. Jokes, teasing, exaggerating and "
-        f"things about her own life are fine (false)."
-    )
+    system = wording("chat.check_system")
+    user = say("chat.check_task", chat=chat, her=her, meant=meant, who=who, draft=draft)
     return system, user
 
 

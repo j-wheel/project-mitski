@@ -1,7 +1,3 @@
-"""Her model plans her days: where she is in the year, a weekly timetable, a rough outline of each week, then each
-day in detail. The model makes it up, code keeps it in bounds (times, sleep, no life-changing events, travel only
-on trips the code allowed)."""
-
 import random
 import re
 import time as monotonic
@@ -12,7 +8,9 @@ from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
 from mitski.core.text import cut, squash
+from mitski.core.texts import say, wording
 from mitski.llm import gpu
+from mitski.social import games
 
 log = logs.get("life")
 
@@ -130,8 +128,9 @@ DAY_SCHEMA = {
                     "to": _TIME,
                     "level": {"enum": ["busy", "gaming"]},
                     "what": {"type": "string", "maxLength": 60},
+                    "game": {"type": "string", "maxLength": 40},
                 },
-                "required": ["from", "to", "level", "what"],
+                "required": ["from", "to", "level", "what", "game"],
                 "additionalProperties": False,
             },
         },
@@ -142,11 +141,7 @@ DAY_SCHEMA = {
     "required": ["wake", "spells", "bed", "up_next_day", "summary"],
     "additionalProperties": False,
 }
-LIMITS = (
-    "Nothing life-changing or out of reach: no pregnancy, weddings or new relationships, no expensive purchases "
-    "(cars, designer stuff), no accidents, hospitals, police or deaths, no moving, quitting or dropping out, no "
-    "windfalls. Keep it within her means."
-)
+LIMITS = wording("life.limits")
 
 
 def clock_time(text):
@@ -171,12 +166,7 @@ def allowed(text, trip=False):
     return bool(text) and not OFF_LIMITS.search(text) and (trip or not TRAVEL.search(text))
 
 
-def build_day(day, tz, raw, wake=None, trip=False, morning=True):
-    """Checks the model's plan for one day and turns it into spells, or None if it can't be used at all.
-
-    A day runs from when she gets up to when she gets up the next morning. Times earlier than her wake-up time are
-    after midnight. Spells that break the rules are dropped, the rest are clipped to when she's awake.
-    """
+def build_day(day, tz, raw, wake=None, trip=False, morning=True, played=()):
     if not isinstance(raw, dict):
         return None
     wake = wake or clock_time(raw.get("wake"))
@@ -210,25 +200,30 @@ def build_day(day, tz, raw, wake=None, trip=False, morning=True):
         s, e = max(when(a), start), min(when(b), night)
         longest = TRIP_LONGEST_HOURS if trip and level == "busy" else LONGEST_HOURS[level]
         if timedelta(minutes=10) <= e - s <= timedelta(hours=longest):
-            spells.append((s, e, level, what))
+            game = ""
+            if level == "gaming":
+                named = str(item.get("game") or "").strip()
+                game = next((g for g in played if g.lower() == named.lower()), "") or games.match(
+                    f"{named} {what}", played
+                )
+            spells.append((s, e, level, what, game))
     kept = []
     for s in sorted(spells, key=lambda s: s[0]):
         if not kept or s[0] >= kept[-1][1]:
             kept.append(s)
-    out = [(datetime.combine(day, time(0, 0), tz), start, "asleep", "asleep")] if morning else []
-    out += kept[:MAX_SPELLS] + [(night, up_at, "asleep", "asleep")]
+    out = [(datetime.combine(day, time(0, 0), tz), start, "asleep", "asleep", "")] if morning else []
+    out += kept[:MAX_SPELLS] + [(night, up_at, "asleep", "asleep", "")]
     summary = squash(raw.get("summary"))[:160]
     return {
         "wake": wake.strftime("%H:%M"),
         "up_next": up_at.strftime("%H:%M"),
         "summary": summary if allowed(summary, trip) else "",
-        "spells": [[a.isoformat(), b.isoformat(), level, what] for a, b, level, what in out],
+        "spells": [[a.isoformat(), b.isoformat(), level, what, game] for a, b, level, what, game in out],
         "dropped": dropped,
     }
 
 
 def check_weekly(raw):
-    """Her fixed weekly schedule (classes, shifts), checked: sane hours, no overlaps, not too much of it."""
     items = []
     for item in (raw or {}).get("items") or []:
         if not isinstance(item, dict) or item.get("day") not in WEEKDAYS:
@@ -253,7 +248,6 @@ def check_weekly(raw):
 
 
 def trip_dates(week_start, seed, chance, gap_weeks, days, last_end, phase):
-    """Whether she goes away this week, and when. Code decides this, the model only picks where."""
     if phase == "exams" or chance <= 0:
         return None
     if last_end is not None and (week_start - last_end).days < gap_weeks * 7:
@@ -306,16 +300,17 @@ class LifePlanner(Component):
         self.file.save(data)
 
     def spells(self, day, tz):
-        """The planned spells for a day as (start, end, level, what), or None if her model hasn't planned it."""
         if not self.on:
             return None
         plan = self._store()["days"].get(day.isoformat())
         if not plan:
             return None
-        return [
-            (datetime.fromisoformat(a).astimezone(tz), datetime.fromisoformat(b).astimezone(tz), level, what)
-            for a, b, level, what in plan["spells"]
-        ]
+        out = []
+        for a, b, level, what, *rest in plan["spells"]:
+            game = rest[0] if rest else (games.match(what, self.cfg.ROUTINE_GAMES) if level == "gaming" else "")
+            start, end = datetime.fromisoformat(a).astimezone(tz), datetime.fromisoformat(b).astimezone(tz)
+            out.append((start, end, level, what, game))
+        return out
 
     def planned(self, day):
         return day.isoformat() in self._store()["days"]
@@ -330,10 +325,17 @@ class LifePlanner(Component):
         if not self.on:
             return ""
         plan = self._store()["days"].get(now.date().isoformat()) or {}
-        parts = [f"Your plans today: {plan['summary']}."] if plan.get("summary") else []
+        parts = [say("life.plans_today", summary=plan["summary"])] if plan.get("summary") else []
         trip = self.trip_on(now.date())
         if trip:
-            parts.append(f"You're away in {trip['where']} ({trip['why']}) until {date.fromisoformat(trip['end']):%A}.")
+            parts.append(
+                say(
+                    "life.away_until",
+                    where=trip["where"],
+                    why=trip["why"],
+                    until=format(date.fromisoformat(trip["end"]), "%A"),
+                )
+            )
         return " ".join(parts)
 
     def describe(self, today):
@@ -358,7 +360,6 @@ class LifePlanner(Component):
         self._save(today)
 
     def ensure(self, now):
-        """Plans today if it isn't yet, and tomorrow from the evening on. One day at a time, in the background."""
         if not self.on or self.running or getattr(self.app, "tasks", None) is None:
             return
         today = now.date()
@@ -398,7 +399,9 @@ class LifePlanner(Component):
         raw = await self.app.helper.ask_json(
             self._day_system(), self._day_prompt(day, term, weekly, week, trip, prev, wake, weather), DAY_SCHEMA, 900
         )
-        built = build_day(day, tz, raw, wake=wake, trip=trip is not None, morning=prev is None)
+        built = build_day(
+            day, tz, raw, wake=wake, trip=trip is not None, morning=prev is None, played=tuple(self.cfg.ROUTINE_GAMES)
+        )
         if built is None:
             log.info("her model's plan for %s wasn't usable, keeping the simple one", day)
             return False
@@ -416,7 +419,7 @@ class LifePlanner(Component):
         return short_name(me) if me is not None else str((self.cfg.NAME_TRIGGERS or ["her"])[0])
 
     def _life(self):
-        return squash(self.cfg.ROUTINE_LIFE) or "an ordinary person"
+        return squash(self.cfg.ROUTINE_LIFE) or wording("life.ordinary_person")
 
     async def _post(self, text):
         relay = getattr(self.app, "relay", None)
@@ -447,18 +450,22 @@ class LifePlanner(Component):
         if checked and until and (day - checked).days < TERM_RECHECK_DAYS and until >= day:
             return term
         year = day.year if day.month >= 8 else day.year - 1
-        found = await self._search(f"{self.place} university academic calendar {year}/{year + 1} exam period")
-        found += await self._search(f"{self.place} public holidays {day.year}")
+        found = await self._search(say("life.search_calendar", place=self.place, year=year, next_year=year + 1))
+        found += await self._search(say("life.search_holidays", place=self.place, year=day.year))
         raw = await self.app.helper.ask_json(
-            "You work out where someone is in their year, so their days can be planned realistically. Answer with "
-            "JSON.",
-            f"Who she is: {self._life()}\nWhere she lives: {self.place or 'not given'}\nToday is {day:%A %Y-%m-%d}.\n"
-            + (f"\nSearch results:{found}\n\n" if found else "\nNo search results, go by how the year usually goes.\n")
-            + "phase: 'term' for normal weeks (classes, or normal work weeks if she isn't a student), 'exams' for an "
-            "exam period, 'break' for holidays between terms. until: the date the phase ends (YYYY-MM-DD). "
-            "semester: a short label for this part of the year that stays the same all semester, like '2026/27 S1'. "
-            "holidays: public or university holidays in the next 60 days (YYYY-MM-DD). note: one sentence on what "
-            "shapes her weeks right now, like midterms or project deadlines coming up.",
+            wording("life.year_system"),
+            (
+                say(
+                    "life.year_who", who=self._life(), place=self.place or "not given", today=format(day, "%A %Y-%m-%d")
+                )
+                + "\n"
+            )
+            + (
+                ("\n" + say("life.search_results", found=found) + "\n\n")
+                if found
+                else ("\n" + wording("life.no_search_results") + "\n")
+            )
+            + wording("life.year_fields"),
             TERM_SCHEMA,
             500,
         )
@@ -492,14 +499,15 @@ class LifePlanner(Component):
         if data["weekly"].get("key") == key:
             return data["weekly"]["items"]
         raw = await self.app.helper.ask_json(
-            "You write someone's fixed weekly schedule for this part of the year. Answer with JSON.",
-            f"Who she is: {self._life()}\nWhere she lives: {self.place or 'not given'}\n"
-            f"Right now: {term.get('phase', 'term')} until {term.get('until', '?')}. {term.get('note', '')}\n\n"
-            "List the things she does at the same time every week. For a student that's her classes (lectures, "
-            "labs, tutorials) with realistic course names for her subject and year, at realistic times, around 15 to "
-            "25 hours a week, with gaps and a short day or two. Add a regular shift or training only if it fits who "
-            "she is. Leave out sleep, meals, free time and one-off things. what: a few words that complete 'right "
-            "now she's ...', like 'in a soil mechanics lecture'. Times are 24h HH:MM.",
+            wording("life.weekly_system"),
+            say(
+                "life.weekly",
+                who=self._life(),
+                place=self.place or "not given",
+                phase=term.get("phase", "term"),
+                until=term.get("until", "?"),
+                note=term.get("note", ""),
+            ),
             WEEKLY_SCHEMA,
             900,
         )
@@ -527,31 +535,36 @@ class LifePlanner(Component):
             term.get("phase"),
         )
         sunday = monday + timedelta(days=6)
-        found = await self._search(f"things to do in {self.place} this week {monday:%d %B %Y} events")
+        found = await self._search(say("life.search_events", place=self.place, week=format(monday, "%d %B %Y")))
         last = [
             f"{k}: {v['summary']}" for k, v in sorted(data["days"].items())[-7:] if v.get("summary") and k < str(monday)
         ]
         timetable = "; ".join(f"{i['day']} {i['from']}-{i['to']} {i['what']}" for i in weekly) or "nothing fixed"
         trip_ask = (
-            f"She's going away from {dates[0]:%A %d %B} to {dates[1]:%A %d %B}. trip_where: somewhere realistic for "
-            f"her to go for that long from where she lives, within her means. trip_why: why, in a few words "
-            f"(visiting family, a friend's birthday, a cheap weekend away)."
+            say("life.trip", start=format(dates[0], "%A %d %B"), end=format(dates[1], "%A %d %B"))
             if dates
-            else "She isn't travelling this week, so trip_where and trip_why are empty."
+            else wording("life.no_trip")
         )
         raw = await self.app.helper.ask_json(
-            f"You sketch the week of {self._her()}, so her days can be planned. Answer with JSON.",
-            f"Who she is: {self._life()}\nWhere she lives: {self.place or 'not given'}\n"
-            f"The week: {monday:%A %d %B} to {sunday:%A %d %B %Y}\n"
-            f"Part of the year: {term.get('phase', 'term')} until {term.get('until', '?')}. {term.get('note', '')}\n"
-            f"Holidays: {', '.join(h['date'] + ' ' + h['name'] for h in term.get('holidays', [])) or 'none'}\n"
-            f"Her weekly schedule: {timetable}\n"
-            + ("Her last days:\n" + "\n".join(last) + "\n" if last else "")
-            + (f"\nWhat's on around her:{found}\n" if found else "")
-            + "\nplans: up to 5 things that make this week hers, each with its date (YYYY-MM-DD) and a few words. "
-            "Ordinary things: a project deadline, a test, dinner with friends, a family lunch, a match or gig she'd "
-            "go to, a night out. Most days have nothing special. "
-            f"{LIMITS}\n{trip_ask}",
+            say("life.week_system", her=self._her()),
+            (
+                say(
+                    "life.week",
+                    who=self._life(),
+                    place=self.place or "not given",
+                    monday=format(monday, "%A %d %B"),
+                    sunday=format(sunday, "%A %d %B %Y"),
+                    phase=term.get("phase", "term"),
+                    until=term.get("until", "?"),
+                    note=term.get("note", ""),
+                    holidays=", ".join(h["date"] + " " + h["name"] for h in term.get("holidays", [])) or "none",
+                    timetable=timetable,
+                )
+                + "\n"
+            )
+            + ((wording("life.week_last_days") + "\n") + "\n".join(last) + "\n" if last else "")
+            + (("\n" + say("life.week_around", found=found) + "\n") if found else "")
+            + ("\n" + say("life.week_plans", limits=LIMITS, trip=trip_ask)),
             WEEK_SCHEMA,
             500,
         )
@@ -580,68 +593,48 @@ class LifePlanner(Component):
 
     def _day_system(self):
         return (
-            f"You plan one ordinary, realistic day for {self._her()}: {self._life()}"
-            + (f" She lives in {self.place}." if self.place else "")
-            + " Answer with JSON.\n"
-            "- Plan from when she gets up to when she goes to bed. List only when she's busy or gaming. Free time at "
-            "home (eating, chilling, on her phone, chatting) is the gaps, don't list it.\n"
-            "- level 'busy': she only checks her phone now and then (classes, exams, studying hard, work, commuting, "
-            "the gym, errands, appointments, out with people). level 'gaming': she's playing and checks her phone "
-            "more often.\n"
-            "- what: a few words that complete 'right now she's ...', like 'in a soil mechanics lecture', 'at the "
-            "library with her project group', 'out getting groceries', 'playing valorant with friends'.\n"
-            "- Make it different from yesterday the way real days differ: a lazy morning, a skipped lecture now and "
-            "then, a late night, coffee with a friend. But keep it ordinary.\n"
-            f"- {LIMITS} She only travels if the notes say she's away.\n"
-            "- Times are 24h HH:MM. bed: when she goes to sleep tonight (after midnight is fine, like 00:40). "
-            "up_next_day: when she gets up tomorrow.\n"
-            "- summary: one short line about her day, like 'uni 9-13, library in the afternoon, ranked with friends "
-            "at night'."
+            say("life.day_system", her=self._her(), who=self._life())
+            + ((" " + say("life.day_lives_in", place=self.place)) if self.place else "")
+            + (" " + say("life.day_rules", limits=LIMITS))
         )
 
     def _day_prompt(self, day, term, weekly, week, trip, prev, wake, weather):
         dow = WEEKDAYS[day.weekday()]
         holiday = [h["name"] for h in term.get("holidays", []) if h["date"] == day.isoformat()]
-        lines = [f"Day: {day:%A %d %B %Y}"]
+        lines = [say("life.day_date", day=format(day, "%A %d %B %Y"))]
         phase = term.get("phase", "term")
-        lines.append(f"Part of the year: {phase} until {term.get('until', '?')}. {term.get('note', '')}".strip())
+        lines.append(say("life.day_part", phase=phase, until=term.get("until", "?"), note=term.get("note", "")).strip())
         fixed = [f"{i['from']}-{i['to']} {i['what']}" for i in weekly if i["day"] == dow]
         if holiday:
-            lines.append(f"Today is a holiday ({', '.join(holiday)}), so no classes or work.")
+            lines.append(say("life.day_holiday", holiday=", ".join(holiday)))
         elif trip:
             n = (day - date.fromisoformat(trip["start"])).days + 1
             total = (date.fromisoformat(trip["end"]) - date.fromisoformat(trip["start"])).days + 1
-            lines.append(
-                f"She's away: {trip['where']} ({trip['why']}), day {n} of {total}. She travels there on the first day "
-                f"and back on the last, and misses her usual schedule."
-            )
+            lines.append(say("life.day_away", where=trip["where"], why=trip["why"], n=n, total=total))
         elif fixed and phase == "term":
-            lines.append(
-                "Her fixed schedule today (she keeps to it, maybe skipping one thing now and then): " + "; ".join(fixed)
-            )
+            lines.append((wording("life.day_fixed") + " ") + "; ".join(fixed))
         elif phase == "exams":
-            lines.append("It's exam time: no regular classes, lots of studying, an exam if her week has one today.")
+            lines.append(wording("life.day_exams"))
         plans = [p["what"] for p in week.get("plans", []) if p["date"] == day.isoformat()]
         if plans:
-            lines.append("Planned for today: " + "; ".join(plans))
+            lines.append((wording("life.day_planned") + " ") + "; ".join(plans))
         if prev and prev.get("summary"):
-            lines.append(f"Yesterday: {prev['summary']}")
+            lines.append(say("life.day_yesterday", summary=prev["summary"]))
         if wake:
-            lines.append(f"She gets up at {wake:%H:%M} (already decided), so wake is {wake:%H:%M}.")
+            lines.append(say("life.day_wake", wake=format(wake, "%H:%M")))
         sleep = self.cfg.ROUTINE_SLEEP or []
         if len(sleep) == 2:
-            lines.append(
-                f"Her usual sleep: about {sleep[0]} to {sleep[1]}, later on weekends, earlier before early starts."
-            )
+            lines.append(say("life.day_sleep", bedtime=sleep[0], wake=sleep[1]))
         if self.cfg.ROUTINE_GAMES:
-            lines.append("Games she plays: " + ", ".join(map(str, self.cfg.ROUTINE_GAMES)))
+            lines.append((wording("life.day_games") + " ") + ", ".join(map(str, self.cfg.ROUTINE_GAMES)))
+            recent = [s[4] for s in (prev or {}).get("spells", []) if len(s) > 4 and s[4]]
+            if recent:
+                lines.append((wording("life.day_played") + " ") + ", ".join(dict.fromkeys(recent)))
         if weather:
-            lines.append(f"Weather: {weather}")
+            lines.append(say("life.day_weather", weather=weather))
         facts = self._own_facts()
         if facts:
-            lines.append(
-                "Things she's told people about herself (keep the day consistent with them): " + "; ".join(facts)
-            )
+            lines.append((wording("life.day_her_facts") + " ") + "; ".join(facts))
         return "\n".join(lines)
 
     def _own_facts(self):

@@ -25,16 +25,6 @@ async def test_ignored_users_get_nothing(world):
     assert world.prompts == []
 
 
-async def test_quiet_server_stays_silent_for_everyone_but_the_owner(world):
-    world.app.away.quiet(world.guild.id, 30)
-    await world.send(world.people["bob"], "mitski hey")
-    assert world.sent_text() == []
-    world.replies.append("ok fine")
-    await world.send(world.owner, "mitski you can talk again")
-    assert not world.app.away.is_quiet(world.guild.id)
-    assert world.sent_text() == ["ok fine"]
-
-
 async def test_messages_outside_her_channels_are_ignored(world):
     other = FakeChannel(world.client, world.guild, "off-topic")
     msg = world.say(world.people["anna"], "mitski hi")

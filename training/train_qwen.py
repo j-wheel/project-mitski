@@ -25,14 +25,17 @@ from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
 from unsloth import FastLanguageModel
 
 from mitski.llm.prompt_format import Format
+from mitski.paths import Paths
 from training.examples import LEAK_MARKERS, encode_row
+
+PATHS = Paths.discover()
 
 BASE_MODEL = "0bserverx/Qwen3.8-27B-Heretic-Abliterated-Uncensored"
 LORA_CONFIG_FALLBACK = "Qwen/Qwen3.8-27B"
-TRAIN_FILE = "data/train.jsonl"
-VAL_FILE = "data/val.jsonl"
-PERSONA_FILE = "data/persona.yaml"
-OUT_DIR = "out_mitski2"
+TRAIN_FILE = str(PATHS.data_file("train.jsonl"))
+VAL_FILE = str(PATHS.data_file("val.jsonl"))
+PERSONA_FILE = str(PATHS.data_file("persona.yaml"))
+OUT_DIR = str(PATHS.get("lora_out"))
 EXPORT_ONLY = False
 MAX_SEQ_LEN = 2048
 LORA_RANK = 32
@@ -49,7 +52,7 @@ EXPORT_LORA_GGUF = True
 EXPORT_MERGED = False
 GGUF_QUANT = "q4_k_m"
 OFFLOAD = "auto"
-LLAMA_CPP = ""
+LLAMA_CPP = str(PATHS.get("llama_cpp_repo") or "")
 SEED = 3407
 
 FMT = Format("qwen")

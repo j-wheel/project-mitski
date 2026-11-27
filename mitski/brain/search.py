@@ -9,6 +9,7 @@ from mitski.core import logs
 from mitski.core.collections import BoundedDict, window_count
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import say
 
 try:
     from ddgs import DDGS
@@ -143,12 +144,8 @@ class WebSearch(Component):
         today = self.app.clock.now().strftime("%A %Y-%m-%d")
         her = short_name(self.me)
         summary = await self.app.helper.ask_json(
-            f"You read google results for {her} and pull out what she needs to reply. Answer with JSON: "
-            f'{{"found": true/false, "answer": "..."}}.',
-            f'{name} said: "{cut(said, 300)}"\nShe googled: {query}\nToday is {today}.\n\n'
-            f"Results:\n{found}\n\nIn 1 or 2 short sentences, write the facts from these results that answer it or help "
-            f"her reply, with the specific names, numbers and dates. Only the facts themselves, don't mention {her} or "
-            f"what she should say. If they don't actually answer it, found is false.",
+            say("search.read_results_system", her=her),
+            say("search.read_results", name=name, said=cut(said, 300), query=query, today=today, found=found, her=her),
             SEARCH_ANSWER,
             320,
         )
@@ -157,8 +154,8 @@ class WebSearch(Component):
             f"**googled** `{query}`\n**answer:** {answer or '(nothing clear)'}\n-# {cut(found, 1200)}"
         )
         if summary and summary.get("found") and answer:
-            return f'You googled "{query}": {answer} Say it in your own words, no links.'
-        return f"You googled \"{query}\" but didn't find a clear answer, so don't make one up."
+            return say("search.found", query=query, answer=answer)
+        return say("search.not_found", query=query)
 
     async def quick_lookup(self, target, msgs):
         if not self.provider or target is None or target.author.id == self.me.id:
@@ -178,13 +175,8 @@ class WebSearch(Component):
         today = self.app.clock.now().strftime("%A %Y-%m-%d")
         recent = "\n".join(f"{self.messages.call(m.author)}: {cut(self.messages.text(m), 200)}" for m in msgs[-6:])
         decide = await self.app.helper.ask_json(
-            f"You decide whether {her}, a person chatting on discord, should quickly google something before she "
-            f'replies. Today is {today}. Answer with JSON: {{"search": true/false, "query": "..."}}.',
-            f'Recent chat:\n{recent}\n\n{name} just said: "{cut(text, 300)}"\n\n'
-            f"Search only when a good reply needs current or specific facts she can't just know: news, game "
-            f"updates and patches, esports or sports results, prices, release dates, real people, specific facts, "
-            f"or when someone asks her to look something up. Chatting, opinions, feelings, jokes and common "
-            f"knowledge don't need a search. If it does, write a short google query.",
+            say("search.decide_system", her=her, today=today),
+            say("search.decide", recent=recent, name=name, text=cut(text, 300)),
             SEARCH_DECIDE,
             80,
         )

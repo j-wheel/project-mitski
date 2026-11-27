@@ -5,7 +5,6 @@ from mitski.chat import sender as sender_module
 
 
 def watch_model(world):
-    """Records whether "is typing" was showing every time her model (reply, retry or helper) was asked something."""
     seen = []
     generate, ask_json = world.app.llm.generate, world.app.helper.ask_json
 

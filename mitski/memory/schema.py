@@ -1,30 +1,9 @@
-SLOTS = {
-    "real_name": "their real first name",
-    "nickname": "what they want to be called",
-    "age": "their age, a number",
-    "birthday": "their birthday, like march 3",
-    "pronouns": "their pronouns",
-    "location": "where they live now",
-    "hometown": "where they're originally from",
-    "job": "their job",
-    "school": "their school or what they study",
-    "relationship": "their relationship status or partner",
-}
+from mitski.core.texts import wording
+
+SLOTS = wording("memory.profile_fields")
 
 
-SLOT_LABELS = {
-    "real_name": "real name",
-    "nickname": "nickname",
-    "age": "age",
-    "birthday": "birthday",
-    "pronouns": "pronouns",
-    "location": "location",
-    "hometown": "hometown",
-    "job": "job",
-    "school": "school",
-    "relationship": "relationship status",
-    "her_nick": "nickname you gave them",
-}
+SLOT_LABELS = wording("memory.field_labels")
 
 
 SLOT_ALIASES = {

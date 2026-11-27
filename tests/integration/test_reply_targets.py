@@ -8,7 +8,6 @@ def replied_to(message):
 
 
 def checker(world, verdicts):
-    """The addressee check answers from verdicts (a list of "to" numbers, 0 = it fits), everything else gets nothing."""
     calls = []
 
     async def ask_json(system, user, schema, max_tokens=400, think=False):

@@ -8,12 +8,11 @@ import aiohttp
 
 from mitski.core import logs
 from mitski.core.storage import JsonFile, write_atomic
+from mitski.core.texts import wording
 
 log = logs.get("embeddings")
 
-QUERY_TASK = (
-    "Given a message in a chat, retrieve memories about the person and past conversations that are relevant to it"
-)
+QUERY_TASK = wording("memory.search_instruction")
 
 
 def _key(text):

@@ -22,8 +22,6 @@ HOUR = 3600
 
 
 async def sticker_description(sticker):
-    """A sticker in a message is only a stub that has to be fetched to get its description. One from a server's
-    sticker list (the background scan) is already complete, and has no fetch at all."""
     full = sticker if hasattr(sticker, "description") else await sticker.fetch()
     return (getattr(full, "description", "") or "").strip()[:100]
 

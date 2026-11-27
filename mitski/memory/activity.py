@@ -1,6 +1,7 @@
 import time
 
 from mitski.core.clock import DAY, ago
+from mitski.core.texts import say, wording
 
 SESSION_CAP_MIN = 12 * 60
 REJOIN_SEC = 15 * 60
@@ -79,7 +80,7 @@ class Tracker:
             if t - self.closed.get((uid, g), -1e12) > REJOIN_SEC:
                 e["n"] += 1
                 if e["n"] == 1:
-                    events.append(f"first time playing {g}")
+                    events.append(say("memory.activity_first_time", game=g))
             e["last"] = t
         _prune(act["games"], MAX_GAMES, lambda e: (e.get("min", 0) + 30 * e.get("n", 0), e.get("last", 0)))
 
@@ -156,16 +157,16 @@ def games_summary(act, now=None, n=4):
             info.append(hours(e["min"]) + " in total")
         week = _recent(e, now, 7)
         if week >= 60:
-            info.append(f"{hours(week)} this week")
+            info.append(say("memory.activity_hours_week", hours=hours(week)))
         if now - e.get("first", now) < 7 * DAY and e.get("n", 0) >= 2:
-            info.append("new this week")
+            info.append(wording("memory.activity_new_week"))
         elif now - e.get("last", now) > 30 * DAY:
-            info.append(f"hasn't played it since {ago(e['last'], now)}")
+            info.append(say("memory.activity_not_since", ago=ago(e["last"], now)))
         bits.append(g + (f" ({', '.join(info)})" if info else ""))
     out = "plays " + "; ".join(bits)
     new_lately = [g for g in lately[:2] if g not in total[:n]]
     if new_lately:
-        out += ". Lately also a lot of " + " and ".join(new_lately)
+        out += (wording("memory.activity_lately_also") + " ") + " and ".join(new_lately)
     return out
 
 
@@ -181,11 +182,11 @@ def music_summary(act, now=None, n=5):
     out = "listens to " + ", ".join(top) + " on spotify"
     fresh = [a for a in lately[:2] if a not in top[:3]]
     if fresh:
-        out += ", and lately a lot of " + " and ".join(fresh)
+        out += (wording("memory.activity_and_lately") + " ") + " and ".join(fresh)
     tracks = act.get("tracks") or []
     if tracks and now - tracks[-1]["t"] < 3 * DAY:
         tr = tracks[-1]
-        out += f'. Last song you saw them on: "{tr["title"]}" by {tr["artist"]} ({ago(tr["t"], now)})'
+        out += say("memory.activity_last_song", title=tr["title"], artist=tr["artist"], ago=ago(tr["t"], now))
     return out
 
 
@@ -202,7 +203,7 @@ def status_summary(act, now=None):
     st = [s for s in act.get("statuses") or [] if now - s["t"] < 10 * DAY]
     if not st:
         return ""
-    return f'their status said "{st[-1]["text"]}" ({ago(st[-1]["t"], now)})'
+    return say("memory.activity_status", text=st[-1]["text"], ago=ago(st[-1]["t"], now))
 
 
 def summary(d, now=None):
@@ -230,22 +231,22 @@ def right_now(d, doing, tracker=None, uid=None, now=None):
         if x.get("kind") == "game" and x.get("name"):
             e = (act.get("games") or {}).get(x["name"])
             mins = tracker.playing_for(uid, x["name"], now) if tracker and uid is not None else None
-            bits = [f"on it for {hours(mins)} now"] if mins and mins >= 20 else []
+            bits = [say("memory.activity_on_it_for", hours=hours(mins))] if mins and mins >= 20 else []
             if e:
                 week = _recent(e, now, 7) + (mins or 0)
                 if e.get("n", 0) <= 1 and e.get("min", 0) < 60:
-                    bits.append("you've never seen them play it before")
+                    bits.append(wording("memory.activity_never_seen"))
                 elif week >= 120:
-                    bits.append(f"{hours(week)} this week")
+                    bits.append(say("memory.activity_hours_week", hours=hours(week)))
                 elif now - e.get("last", now) > 30 * DAY:
-                    bits.append("first time in a while")
+                    bits.append(wording("memory.activity_first_in_while"))
             if bits:
                 out.append(f"{x['name']}: " + ", ".join(bits))
         elif x.get("kind") == "music" and x.get("artist"):
             artist = str(x["artist"]).split(";")[0].strip()
             e = (act.get("artists") or {}).get(artist)
             if e and e.get("n", 0) >= 10:
-                out.append(f"{artist}: one of their favorite artists")
+                out.append(say("memory.activity_favorite_artist", artist=artist))
             elif e and e.get("n", 0) <= 1:
-                out.append(f"{artist}: not something you've seen them listen to before")
+                out.append(say("memory.activity_new_artist", artist=artist))
     return out

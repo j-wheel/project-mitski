@@ -11,6 +11,7 @@ from mitski.core import logs, voice
 from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import fill, say, wording
 from mitski.reminders.timing import HINT as REMINDER_HINT
 
 log = logs.get("brain")
@@ -49,6 +50,7 @@ class Thought:
     subtext: str = ""
     move: str = ""
     follow_up: str = ""
+    situation: str = ""
 
     def __post_init__(self):
         self.notes = [n for n in self.notes if n]
@@ -64,13 +66,12 @@ class Thought:
 
 @dataclass(frozen=True)
 class Read:
-    """How she reads them before replying: what they want, how they seem, what's under it, what she'll do."""
-
     wants: str = ""
     mood: str = "neutral"
     subtext: str = ""
     move: str = ""
     follow_up: str = ""
+    situation: str = ""
 
 
 @dataclass
@@ -86,8 +87,6 @@ class Question:
     remind: bool
     explicit: bool
     to_her: str | None
-    owner: bool
-    orders: str
     recent: str
     about: str
     knows: str = ""
@@ -138,12 +137,10 @@ class Brain(Component):
         explicit=True,
         channel=None,
         to_her=None,
-        owner=False,
-        orders="",
         said=None,
         parts=None,
     ):
-        if not (self.worth_it(mode, target, explicit, said) or (owner and self.enabled and target is not None)):
+        if not self.worth_it(mode, target, explicit, said):
             return Thought()
         if target.id in self.done:
             return self.done[target.id]
@@ -153,7 +150,7 @@ class Brain(Component):
                 return await asyncio.shield(running)
             except Exception:
                 log.debug("the early plan for %s failed, planning again", target.id)
-        q = self._question(target, msgs, channel, explicit, to_her, owner, orders, said, parts)
+        q = self._question(target, msgs, channel, explicit, to_her, said, parts)
         task = asyncio.ensure_future(self._plan(q))
         self.thinking[target.id] = task
         try:
@@ -164,7 +161,7 @@ class Brain(Component):
         self.done[target.id] = thought
         return thought
 
-    def _question(self, target, msgs, channel, explicit, to_her, owner, orders, said, parts):
+    def _question(self, target, msgs, channel, explicit, to_her, said, parts):
         newest = said or self.messages.text(target)
         return Question(
             target=target,
@@ -178,16 +175,12 @@ class Brain(Component):
             remind=bool(REMINDER_HINT.search(newest)),
             explicit=explicit,
             to_her=to_her,
-            owner=owner,
-            orders=orders,
             recent=self._recent_chat(msgs),
             about=self._replying_to(target),
             knows=self._knows(target.author, newest),
         )
 
     def _knows(self, user, said):
-        """A few lines on who they are to her and how she's doing, so she reads them like someone who knows them:
-        what she knows about them, how she feels about them, what they last talked about, and her own mood."""
         memory, feelings = self.memory, getattr(self.app, "feelings", None)
         name = memory.call_name(user) or short_name(user)
         out = []
@@ -199,18 +192,18 @@ class Brain(Component):
             bits += [f["text"] + (f" ({f['when']})" if f.get("when") else "") for f in plans]
             bits = [b for b in bits if b]
             if bits:
-                out.append(f"What you know about {name}: " + "; ".join(bits) + ".")
+                out.append((say("thinking.knows_about", name=name) + " ") + "; ".join(bits) + ".")
             if d.get("portrait"):
-                out.append(f"Who {name} is to you: {cut(d['portrait'], 240)}")
+                out.append(say("thinking.who_they_are", name=name, portrait=cut(d["portrait"], 240)))
             feel = feelings.summary(d, user.id) if feelings is not None else ""
             if feel:
-                out.append(f"How you feel about {name}: {feel}.")
+                out.append(say("thinking.how_you_feel", name=name, feel=feel))
             last = memory._last_episodes(d, 1)
             if last:
-                out.append(f"Last time you talked: {cut(last[-1]['summary'], 200)}")
-        mood = feelings.mood_note() if feelings is not None else ""
+                out.append(say("thinking.last_time", summary=cut(last[-1]["summary"], 200)))
+        mood = feelings.mood_words() if feelings is not None else ""
         if mood:
-            out.append("Your own mood: " + mood.split(". Let it colour")[0].replace("How you feel right now: ", ""))
+            out.append(wording("thinking.your_mood") + " " + mood)
         return "\n".join(out)
 
     def _who_is(self, user):
@@ -227,10 +220,10 @@ class Brain(Component):
             parent = ref.resolved
         to = ""
         if parent is not None and parent.author.id != m.author.id:
-            to = f" (replying to {self._who_is(parent.author)})"
+            to = " " + say("thinking.replying_to", name=self._who_is(parent.author))
         elif m.author.id == self.me.id and self.state.addressed.get(m.id):
             who = self.messages.name_of_id(self.state.addressed[m.id])
-            to = f" (to {who})" if who else ""
+            to = (" " + say("chat.marked_to", name=who)) if who else ""
         return f"{self._who_is(m.author)}{to}: {cut(self.messages.text(m), 220)}"
 
     def _replying_to(self, target):
@@ -240,7 +233,7 @@ class Brain(Component):
         who = (
             "her" if ref.author.id == self.me.id else f"{self.memory.call_name(ref.author) or short_name(ref.author)}'s"
         )
-        return f'\n(it\'s a discord reply to {who} message: "{cut(self.messages.text(ref), 200)}")'
+        return "\n" + say("thinking.discord_reply", whose=who, message=cut(self.messages.text(ref), 200))
 
     def _in_her_voice(self, q, brief):
         names = self.messages.own_names()
@@ -272,6 +265,7 @@ class Brain(Component):
         wants = voice.to_you(cut(str(plan.get("wants") or "").strip(), 160), own)
         mood = plan.get("mood") if plan.get("mood") in prompts.MOODS else "neutral"
         subtext = voice.to_you(cut(str(plan.get("subtext") or "").strip(), 160), own)
+        situation = voice.to_you(cut(str(plan.get("situation") or "").strip(), 240), own)
         move = voice.to_you(cut(str(plan.get("move") or "").strip(), 180), own)
         follow_up = cut(str(plan.get("follow_up") or "").strip(), 120)
         answer = cut(str(plan.get("answer") or "").strip(), prompts.BRIEF_MAX)
@@ -299,7 +293,7 @@ class Brain(Component):
             out = await self.app.helper.ask_json(*prompts.brief_request(q, checked, answer))
             brief = clean_brief((out or {}).get("say")) or brief
         brief = self._in_her_voice(q, brief) if reply_type in prompts.PLANNED else ""
-        read = Read(wants, mood, subtext, move, follow_up)
+        read = Read(wants, mood, subtext, move, follow_up, situation)
         notes = self._notes(q, to_her, reply_type, read, brief, checked, failed)
         if skipped and not brief and not checked:
             notes.append(prompts.SKIPPED_LOOKUP_NOTE)
@@ -331,12 +325,11 @@ class Brain(Component):
             subtext=subtext,
             move=move,
             follow_up=follow_up,
+            situation=situation,
         )
 
     def _skips_lookup(self, q, ask, steps):
-        """Sometimes she just doesn't bother to google something, like anyone. Never when they asked her to look it
-        up, never for her owner, and never for a favour or a big ask (those are handled on their own)."""
-        if not any(s["tool"] == "search" for s in steps) or q.owner or ASKED_TO_SEARCH.search(q.newest):
+        if not any(s["tool"] == "search" for s in steps) or ASKED_TO_SEARCH.search(q.newest):
             return False
         return ask in ("none", "quick", "expert") and random.random() < float(self.cfg.SKIP_LOOKUP_CHANCE)
 
@@ -358,31 +351,28 @@ class Brain(Component):
 
     @staticmethod
     def _notes(q, to_her, reply_type, read, brief, checked, failed):
-        notes = [f"What {q.name} wants: {read.wants.rstrip('.')}."] if read.wants else []
+        notes = [say("thinking.note_situation", situation=read.situation.rstrip("."))] if read.situation else []
+        if read.wants:
+            notes.append(say("thinking.note_wants", name=q.name, wants=read.wants.rstrip(".")))
         if read.mood not in ("", "neutral"):
-            notes.append(f"{q.name} seems {read.mood} right now.")
+            notes.append(say("thinking.note_mood", name=q.name, mood=read.mood))
         if read.subtext:
-            notes.append(f"Under the surface: {read.subtext.rstrip('.')}.")
+            notes.append(say("thinking.note_subtext", subtext=read.subtext.rstrip(".")))
         if read.move:
-            notes.append(f"What you're going for: {read.move.rstrip('.')}.")
+            notes.append(say("thinking.note_move", move=read.move.rstrip(".")))
         if read.follow_up:
-            notes.append(f"If it fits, you could ask them: {read.follow_up}")
+            notes.append(say("thinking.note_follow_up", follow_up=read.follow_up))
         notes += checked
         if failed and not checked and reply_type == "answer_question" and not brief:
-            notes.append("You tried to check but couldn't find out, so say you're not sure instead of guessing.")
+            notes.append(wording("thinking.couldnt_find_out"))
         if brief and reply_type in prompts.ANSWERY:
-            notes.append(prompts.ANSWER_NOTE.format(brief=brief.rstrip(".")))
+            notes.append(fill(prompts.ANSWER_NOTE, brief=brief.rstrip(".")))
         elif brief and reply_type == "story":
-            notes.append(prompts.STORY_NOTE.format(brief=brief.rstrip(".")))
+            notes.append(fill(prompts.STORY_NOTE, brief=brief.rstrip(".")))
         elif prompts.REPLY_TYPES.get(reply_type):
             notes.append(prompts.REPLY_TYPES[reply_type])
         if to_her == "everyone" and not q.explicit:
-            notes.append(f"{q.name} said that to the whole chat, not just you.")
-        if q.owner:
-            notes.append(
-                f"If {q.name} is asking you to do something, you just do it, like you would for a close friend: no "
-                f"fuss, and no formal confirmation."
-            )
+            notes.append(say("thinking.said_to_everyone", name=q.name))
         return notes
 
     @staticmethod
@@ -392,17 +382,6 @@ class Brain(Component):
         if isinstance(r, dict) and str(r.get("what") or "").strip():
             actions["remind"] = {k: r.get(k) for k in prompts.REMIND["properties"]}
             actions["remind"]["said"] = q.newest
-        if not q.owner:
-            return actions
-        for k in ("order", "status", "dm_who", "dm_say"):
-            v = cut(str(plan.get(k) or "").strip(), 300)
-            if v:
-                actions[k] = v
-        if plan.get("drop_orders"):
-            actions["drop_orders"] = [int(i) for i in plan["drop_orders"] if str(i).lstrip("-").isdigit()]
-        quiet = plan.get("quiet_minutes")
-        if isinstance(quiet, int) and quiet != 0:
-            actions["quiet_minutes"] = quiet
         return actions
 
     @staticmethod
@@ -416,6 +395,7 @@ class Brain(Component):
         parts = [
             ", ".join(f"{s['tool']}({s['input']})" for s in steps),
             f"wants: {read.wants}" if read.wants else "",
+            f"going on: {read.situation}" if read.situation else "",
             f"under it: {read.subtext}" if read.subtext else "",
             f"going for: {read.move}" if read.move else "",
             f"could ask: {read.follow_up}" if read.follow_up else "",
@@ -444,7 +424,7 @@ class Brain(Component):
                 return await self.app.tools.time_in(arg)
             if tool == "calc":
                 out = calc(arg)
-                return f"You worked it out: {out}." if out else ""
+                return say("thinking.worked_it_out", result=out) if out else ""
             if tool == "look_closer":
                 candidates = [target]
                 ref = target.reference.resolved if getattr(target, "reference", None) else None
@@ -452,7 +432,7 @@ class Brain(Component):
                     candidates.append(ref)
                 candidates += list(reversed(list(msgs)))
                 text = await self.app.vision.detail(candidates, arg or self.messages.text(target))
-                return f"You looked at it closely: {text}" if text else ""
+                return say("thinking.looked_closely", text=text) if text else ""
             if tool == "recall":
                 return self.app.tools.recall(arg, skip_id=target.author.id)
             if tool == "remember":

@@ -38,7 +38,7 @@ def startup_report(app):
     ]
     if owner.active:
         lines.append(
-            f"owner: {owner.id} ({owner.name}) | {len(owner.data['orders'])} standing orders"
+            f"commands: only {owner.id}"
             + (f" | quiet in {len(away.data['quiet'])} place(s)" if away.data["quiet"] else "")
         )
     if cfg.MEMORY:

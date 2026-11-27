@@ -6,6 +6,7 @@ import time
 
 from mitski.core import logs
 from mitski.core.text import cut
+from mitski.core.texts import fill, fill_all, say, wording
 from mitski.llm import gpu
 from mitski.llm.client import tokens_guess
 from mitski.llm.helper import parse_json
@@ -115,142 +116,67 @@ class NotesMixin:
         return True
 
     def _known_text(self, d):
+        label = wording("memory.known_labels")
         lines = []
         for key in list(SLOTS) + ["her_nick"]:
             v = self._slot_value(d, key)
             if v is not None:
-                label = "nickname she gave them" if key == "her_nick" else key
-                lines.append(f"{label}: {v}" + (" (only heard from someone else)" if unsure(d["slots"][key]) else ""))
+                name = label["her_nick"] if key == "her_nick" else key
+                lines.append(f"{name}: {v}" + (" " + label["heard_field"] if unsure(d["slots"][key]) else ""))
         for f in sorted(d["facts"], key=lambda f: f["id"]):
             lines.append(
                 f"F{f['id']} [{f['cat']}] "
                 + f["text"]
-                + (" (only heard from someone else, not confirmed)" if unsure(f) else "")
-                + (f" (date {f['when']})" if f.get("when") else "")
+                + (" " + label["heard_fact"] if unsure(f) else "")
+                + (" " + fill(label["date"], date=f["when"]) if f.get("when") else "")
             )
         if d.get("rel"):
-            lines.append(f"who they are to her (set by hand, always true): {d['rel']}")
+            lines.append(fill(label["rel"], rel=d["rel"]))
         if d.get("pinned"):
-            lines.append(f"set by hand, always true: {d['pinned']}")
+            lines.append(fill(label["pinned"], pinned=d["pinned"]))
         if d.get("bond"):
-            lines.append(f"bond: {d['bond']}")
+            lines.append(fill(label["bond"], bond=d["bond"]))
         profile = self.profile_line(d, "their")
         if profile:
-            lines.append(profile.replace("their's", "their", 1) + " (their profile, not something they said)")
-        return "\n".join(lines) or "(nothing yet)"
+            lines.append(profile.replace("their's", "their", 1) + " " + label["their_profile"])
+        return "\n".join(lines) or label["nothing"]
 
     def _instructions(self, her):
         today = dt.date.today()
         yesterday = today - dt.timedelta(days=1)
         monday = today + dt.timedelta(days=(7 - today.weekday()) or 7)
-        example = {
-            "profile": {
-                "age": {"value": "18", "evidence": "i turned 18 yesterday"},
-                "birthday": {
-                    "value": f"{MONTHS[yesterday.month - 1]} {yesterday.day}",
-                    "evidence": "i turned 18 yesterday",
-                },
-            },
-            "new_facts": [
-                {
-                    "category": "plans",
-                    "fact": "has an exam",
-                    "tags": ["exam", "school", "test"],
-                    "evidence": "got an exam on monday tho ugh",
-                    "date": monday.isoformat(),
-                },
-                {
-                    "category": "people",
-                    "fact": "has a little sister",
-                    "tags": ["sister", "family", "sibling"],
-                    "evidence": "alex has a little sister btw",
-                },
-            ],
-            "changed_facts": [
-                {"id": 1, "fact": "quit valorant, plays deadlock now", "evidence": "i quit valorant its so bad now"},
-                {"id": 2, "fact": "has a cat named mochi", "evidence": "my cat's name is mochi not miso lol"},
-            ],
-            "wrong_facts": [],
-            "her_nickname_for_them": "",
-            "their_name_for_her": "doll",
-            "bond": "",
-            "conversation": {
-                "summary": "alex turned 18 and switched from valorant to deadlock. you mixed up "
-                "his cat's name and he teased you for being older",
-                "mood": "playful",
-            },
-            "new_threads": ["ask alex how his exam on monday went"],
-            "done_threads": [],
-            "about_her": [{"category": "life", "fact": "is 20 years old", "evidence": "i'm 20 btw"}],
-            "feelings": [
-                {
-                    "kind": "friendly_teasing",
-                    "intensity": 1,
-                    "evidence": "ok doll whatever u say",
-                    "why": "teased you back about being older",
-                }
-            ],
-            "look_up": ["deadlock (game)"],
-        }
-        return f"""You keep {her}'s memory of the people she talks to on discord. You get what she already knows about one person and their newest messages. Answer with JSON only, saying what's new or changed about that person.
-
-Be careful about who is who: the person is the one in "Known about", {her} is her, everyone else is someone else. Names and pet names they use for {her} ("hey doll", "thanks babe") are NOT their nickname, those go in their_name_for_her.
-
-Everything you write is {her}'s own memory, so she reads it about herself: wherever {her} comes up, write "you" and "your", never her name or she/her ("you mixed up his cat's name", "only plays with your group"). The only exception is "evidence", which is copied word for word.
-
-People sometimes talk about {her} as a bot or an AI ("the bot", "the ai", "wheeler's bot", "his bot", "she's an ai"), or about how she works (her code, her memory, her persona, her vc or typing sounds, her profile). All of that is about {her}, not about anyone else and not about someone's girlfriend or friend: never turn it into a fact about the person ("has a bot", "his girlfriend's vc plays asmr"), and leave it out of summaries. Never call {her} a bot or an AI in anything you write.
-
-EVIDENCE: every profile field, fact, change and correction needs "evidence": the exact words from the messages it comes from, copied word for word (a short piece of one message is fine), and those words have to actually say it (not just be a message from around then). It gets checked against the chat, and anything that isn't really in there is thrown away. So only write down what someone actually said. Never guess, never fill in details nobody said, never mix up who said what. Something someone ELSE says about the person counts too (quote them), {her} will treat it as hearsay. Pictures show up as [image: ...]: you can learn from them (like their dog) only if they say it's theirs.
-
-profile: only the fields the new messages tell you ({", ".join(f"{k} = {v}" for k, v in SLOTS.items())}), each as {{"value": ..., "evidence": ...}}. A new value replaces the old one. Leave out fields that weren't mentioned.
-new_facts: new things worth remembering later. what they like, play, watch, listen to, do, their friends, family and pets, things that happened to them, how they are. Short, about them, without their name ("plays cs2 every night"). tags: 2 to 5 lowercase words to find it again later, including broader ones (a fact about a golden retriever gets "dog", "pet"). For plans add "date" as YYYY-MM-DD if you can work it out (today is {today.strftime("%A")} {today.isoformat()}).
-changed_facts: known facts (by number) that changed or were a bit wrong, rewritten so they're true now (with a new "date" if a plan moved).
-wrong_facts: known facts that turned out false, aren't true anymore, or that they asked {her} to forget, as {{"id": number, "evidence": what they said}}.
-her_nickname_for_them: a real nickname {her} gave them (like "from now on ur bean"), not a pet name like babe or doll, otherwise "".
-their_name_for_her: what they call {her}, if they used a name or pet name for her (doll, babe, a nickname), otherwise "".
-profile.nickname: only if THEY said they want to be called something ("call me will", "i go by will").
-bond: one sentence on how they and {her} get along, written to her ("you tease each other a lot"), only if that changed, otherwise "".
-conversation: if {her} talked with them in these messages: summary = 1 or 2 sentences on what you two talked about and anything that happened between you, written to {her} as "you" so she can remember it later (if "This conversation so far" has a summary, write the updated one for the whole conversation). mood = a few words on how it went. Both "" if {her} wasn't part of it.
-new_threads: things to come back to in a later chat, written as a note to {her}: something she promised, something they'll tell her later, something she should ask about ("ask how the date went", "you said you'd send him the song"). Not plans with a date (those are facts). Usually none.
-done_threads: numbers of open threads (T) that got dealt with in these messages.
-about_her: things {her} said about HERSELF (her age, life, likes, past, plans), with her own words as evidence, so she stays consistent. Start with the verb ("is 20 years old", "plays cs2") and say "your" for what's hers ("your pc keeps freezing"). Nothing about whether she's a bot, an AI or a real person.
-feelings: how the person treated {her} in the new messages, so she can feel about them the way a person would. ONLY messages marked "(to {her})" count: those were said to her. Anything they said to someone else or to the room never counts, however nice or mean, even if it's about {her}. The one exception is mean_to_her_friends, from a message marked "(to <name>)" going after that person. Each moment is one from this list:
-{FEELING_KINDS}
-intensity: 1 = a small thing, 2 = clear, 3 = a big deal. why: a few words to {her} about what they did ("called you annoying", "hyped your cs clip", "loves laufey like you do"). evidence: their exact words, as always. Tell banter from meanness: friends roasting each other with "lol", emojis and both laughing is friendly_teasing, not insulted_her. Sarcasm isn't a compliment, and being nice once isn't genuine_affection. shared_interest only when they like something {her} likes too (her own facts and what she said show what she likes). Most messages have none of this: an empty list is normal.
-
-look_up: at most 2 specific things the person is into or talking about that {her} might not know, worth a quick google so she understands them next time: a band or artist, a game, a show, a place, a niche hobby ("laufey (singer)", "deadlock (game)"). Name it the way you'd google it, with what it is in brackets. Not everyday things everyone knows, not people from the chat. Usually none.
-
-Only write down lasting things worth knowing next week. Not what they just did in this chat ("said hi", "used 'meow'", "sent a gif", "asked about x"), not emojis, and not how they feel right this moment ("is tired", "is frustrated"). Skip jokes, sarcasm and obvious trolling. Don't repeat what's already known. Anything lasting they tell you about themselves (what they like, do, have, plan, who's in their life) is worth keeping, even small things: when in doubt, keep it. Empty lists are fine when there's really nothing.
-
-Example. Known about alex:
-age: 17
-F1 [games] plays valorant
-F2 [life] has a cat named miso
-New messages:
-alex: i turned 18 yesterday!! also i quit valorant its so bad now
-{her}: happy late birthday!! what are u playing now
-alex: deadlock mostly. got an exam on monday tho ugh
-alex: and my cat's name is mochi not miso lol
-sam: alex has a little sister btw
-{her}: mochi!! im sorry 😭 i'm 20 btw so ur still a baby
-alex: ok doll whatever u say
-Answer:
-{json.dumps(example, ensure_ascii=False)}"""
+        example = fill_all(
+            wording("memory.notes_example"),
+            birthday=f"{MONTHS[yesterday.month - 1]} {yesterday.day}",
+            monday=monday.isoformat(),
+        )
+        return say(
+            "memory.notes_system",
+            her=her,
+            fields=", ".join(f"{k} = {v}" for k, v in SLOTS.items()),
+            today=f"{today.strftime('%A')} {today.isoformat()}",
+            feeling_kinds=FEELING_KINDS,
+            example=json.dumps(example, ensure_ascii=False),
+        )
 
     def _data_text(self, d, name, her, earlier, new, line, think=False):
         now = time.time()
-        text = f"Known about {name}:\n{self._known_text(d)}\n"
+        text = say("memory.notes_known", name=name, known=self._known_text(d)) + "\n"
         threads = [t for t in d.get("threads", []) if not t.get("done")]
         if threads:
             text += (
-                f"\nOpen threads with {name}:\n"
+                "\n"
+                + say("memory.notes_threads", name=name)
+                + "\n"
                 + "\n".join(f"T{t['id']} {t['text']} ({said_ago(t['t'], now)})" for t in threads)
                 + "\n"
             )
         past = self._last_episodes(d, 3, now)
         if past:
             text += (
-                f"\nTheir last conversations with {her}:\n"
+                "\n"
+                + say("memory.notes_episodes", her=her)
+                + "\n"
                 + "\n".join(
                     f"E{e['id']} ({said_ago(e.get('u', e['t']), now)}"
                     + (f", {e['where']}" if e.get("where") else "")
@@ -262,31 +188,26 @@ Answer:
             )
         current = self._current_episode(d)
         if current:
-            text += f"\nThis conversation so far: {current['summary']}\n"
+            text += "\n" + say("memory.notes_current", summary=current["summary"]) + "\n"
         if self.self_notes and self.own["facts"]:
             own = sorted(self.own["facts"], key=lambda f: -f["id"])[:25]
             text += (
-                f"\nThings {her} already said about herself:\n"
+                "\n"
+                + say("memory.notes_her_facts", her=her)
+                + "\n"
                 + "\n".join(f"S{f['id']} [{f['cat']}] {f['text']}" for f in sorted(own, key=lambda f: f["id"]))
                 + "\n"
             )
         if earlier:
-            text += "\nEarlier messages (already noted, only for context):\n" + "\n".join(map(line, earlier)) + "\n"
-        text += "\nNew messages:\n" + "\n".join(map(line, new)) + "\n\n"
+            text += "\n" + wording("memory.notes_earlier") + "\n" + "\n".join(map(line, earlier)) + "\n"
+        text += "\n" + wording("memory.notes_new") + "\n" + "\n".join(map(line, new)) + "\n\n"
         if think:
-            text += (
-                f"First think it through: go over the new messages one by one. Who wrote it, and is it about "
-                f"{name}, {her} or someone else? Is it lasting, or just chat? Is it already known, or does it "
-                f"correct something known? What are the exact words to quote? And how did {name} treat {her}: "
-                f"kind, mean, banter, flirty, something in common? Then answer with the JSON."
-            )
+            text += say("memory.notes_think", name=name, her=her)
         else:
-            text += f"What's new or changed about {name}? JSON only."
+            text += say("memory.notes_json_only", name=name)
         return text
 
     def _aimed(self, user, msgs, me):
-        """Who each of the person's messages was really said to, decided by code: "them" = to her, "them_friend" =
-        to someone she's close to, "them_else" = to anyone else or the room. Her own are "her", others' "other"."""
         addressing = getattr(self.app, "addressing", None)
         feelings = getattr(self.app, "feelings", None)
         hers = [m for m in msgs if m.author.id == me]
@@ -571,7 +492,7 @@ Answer:
         fold = d["episodes"][: -self.episodes_max] if len(d["episodes"]) > self.episodes_max else []
         facts = "\n".join(
             f"F{f['id']} [{f['cat']}] {f['text']}"
-            + (" (heard from others, not confirmed)" if unsure(f) else "")
+            + (" " + wording("memory.known_labels.reflect_heard") if unsure(f) else "")
             + (f" @{f['when']}" if f.get("when") else "")
             + f" ({said_ago(f['t'], now)})"
             for f in sorted(d["facts"], key=lambda f: f["id"])
@@ -593,60 +514,53 @@ Answer:
             for j in d.get(kind) or []:
                 prev.append(f"{kind}: {j['text']} (from {', '.join(j.get('from', []))})")
         act = activity.summary(d, now)
-        system = (
-            f"You help {her} understand a person she knows from discord, from everything she remembers about "
-            f'them. Write to her: {her} is always "you" and "your", never her name or she/her ("one of your server '
-            f'friends", not "one of {her}\'s server friends"). Use ONLY what\'s listed: no guessing, nothing invented, no '
-            f"psychoanalysing. {her} is a real girl to everyone: if anything listed talks about her as a bot or "
-            f'an AI ("his bot", "the ai"), it\'s people joking about her, so leave it out and never call her '
-            f"that. Answer with JSON.\n\n"
-            f"portrait: 2 to 4 sentences on who they are and what matters to them right now, and what they are "
-            f'to her. Things only heard from others stay "apparently".\n'
-            f'talk_style: 1 or 2 sentences on how you are with them and what they like from you ("you tease them '
-            f'and they love it", hype, being there for them, gaming talk, ...), going by how your chats went and '
-            f"fitting how you feel about them.\n"
-            f"inside_jokes: running jokes or bits between them, only if the episodes or facts show one. "
-            f"avoid: things that upset them or that they don't want to talk about, only if shown. "
-            f'shared: things they and {her} have in common or did together. For all three, "from" lists the '
-            f"F/E numbers it comes from. Empty lists are fine.\n"
-            f"merge: facts that say the same thing or belong together, as one fact. forget: facts that are "
-            f"contradicted by a newer one (higher number = newer), outdated, or too trivial to keep.\n"
-            "history: "
-            + (
-                "a short summary (max 3 sentences) of the episodes marked OLD plus the old history, "
-                "so they can be dropped: how long they've known each other and what they went "
-                "through together."
-                if fold
-                else '"" (nothing to fold yet)'
-            )
+        system = say(
+            "memory.reflect_system",
+            her=her,
+            history=wording("memory.reflect_history_fold") if fold else wording("memory.reflect_history_none"),
         )
+        feelings = getattr(self.app, "feelings", None)
+        feel = feelings.summary(d) if feelings is not None else ""
+        pinned = ""
+        if d.get("rel") or d.get("pinned"):
+            pinned = (
+                say(
+                    "memory.reflect_pinned",
+                    name=name,
+                    rel=d.get("rel") or wording("memory.reflect_rel_unknown"),
+                    pinned=d.get("pinned") or "",
+                )
+                + "\n\n"
+            )
+        none = wording("memory.reflect_none")
         user_text = (
-            f"Everything {her} remembers about {name}.\n\n"
+            say("memory.reflect_intro", her=her, name=name)
+            + "\n\n"
+            + pinned
+            + say("memory.reflect_profile", profile=self.slot_summary(d) or wording("memory.reflect_nothing"))
+            + "\n"
+            + (say("memory.reflect_bond", bond=d["bond"]) + "\n" if d.get("bond") else "")
+            + (say("memory.reflect_feelings", feelings=feel) + "\n" if feel else "")
+            + (say("memory.reflect_discord", activity=act) + "\n" if act else "")
             + (
-                f"Set by hand, always true, everything you write has to fit it: "
-                f"{name} is {d.get('rel') or 'someone she knows'}. {d.get('pinned') or ''}\n\n"
-                if d.get("rel") or d.get("pinned")
-                else ""
-            )
-            + f"Profile: {self.slot_summary(d) or '(nothing)'}\n"
-            + (f"Bond: {d['bond']}\n" if d.get("bond") else "")
-            + (
-                f"How you feel about them right now: {self.app.feelings.summary(d)}\n"
-                if getattr(self.app, "feelings", None) is not None and self.app.feelings.summary(d)
-                else ""
-            )
-            + (f"On discord: {act}\n" if act else "")
-            + (
-                f"{self.profile_line(d, name)} (their own profile, good for who they are)\n"
+                say("memory.reflect_own_profile", profile=self.profile_line(d, name)) + "\n"
                 if d.get("discord_profile")
                 else ""
             )
-            + f"\nFacts:\n{facts or '(none)'}\n\nConversations (episodes):\n{episodes or '(none)'}\n"
-            + (f"\nOLD (fold these into history): {', '.join('E' + str(e['id']) for e in fold)}\n" if fold else "")
-            + (f"\nOld history: {d['history']}\n" if d.get("history") else "")
-            + ("\nWhat you wrote last time (keep what's still right):\n" + "\n".join(prev) + "\n" if prev else "")
-            + ("\nThink it through first, then answer with the JSON." if self.think_on else "\nJSON only.")
+            + "\n"
+            + say("memory.reflect_facts", facts=facts or none, episodes=episodes or none)
+            + "\n"
+            + (
+                "\n" + say("memory.reflect_fold", episodes=", ".join("E" + str(e["id"]) for e in fold)) + "\n"
+                if fold
+                else ""
+            )
+            + ("\n" + say("memory.reflect_old_history", history=d["history"]) + "\n" if d.get("history") else "")
+            + ("\n" + wording("memory.reflect_last_time") + "\n" + "\n".join(prev) + "\n" if prev else "")
+            + "\n"
+            + (wording("memory.reflect_think") if self.think_on else wording("memory.reflect_json_only"))
         )
+
         changes = []
         self.reflecting.add(id(d))
         try:

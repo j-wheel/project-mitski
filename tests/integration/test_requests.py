@@ -26,7 +26,6 @@ RECIPE = "lemon drizzle: mix flour sugar eggs butter and lemon zest, bake 40 min
 
 
 async def test_a_whole_recipe_gets_brushed_off_not_written_out(world):
-    """The real one: "whats your favorite cake and can u give me a recipe" got the recipe, step by step."""
     world.app.cfg.BRUSH_OFF_CHANCE = 1.0
     planner(world, ask="effort", answer=RECIPE)
     world.replies.append("lemon drizzle!! idk how to make it tho my mom does lol")

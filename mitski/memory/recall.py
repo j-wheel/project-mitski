@@ -3,6 +3,7 @@ import time
 
 from mitski.core import logs
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 from mitski.memory import activity
 from mitski.memory.dates import DAY, birthday_in, parse_date, said_ago, until
 from mitski.memory.embeddings import cosine
@@ -89,18 +90,20 @@ class RecallMixin:
             text = obj["text"]
             text = f"{call}'s {text[6:]}" if text.lower().startswith("their ") else f"{call} {text}"
             if unsure(obj):
-                return (
-                    text
-                    + f" (someone else said that, {said_ago(obj['t'], now)}, it's not from {call} so you're not sure)"
-                )
-            return text + f" (they told you {said_ago(obj['t'], now)})"
+                return text + (" " + say("memory.heard_from_someone", when=said_ago(obj["t"], now), name=call))
+            return text + (" " + say("memory.they_told_you", when=said_ago(obj["t"], now)))
         if kind == "episode":
-            where = f" in {obj['where']}" if obj.get("where") else ""
-            return f"{said_ago(obj.get('u', obj['t']), now)}{where} you two talked: {obj['summary'].rstrip('.')}"
+            where = (" " + say("memory.in_place", place=obj["where"])) if obj.get("where") else ""
+            return say(
+                "memory.you_talked",
+                when=said_ago(obj.get("u", obj["t"]), now),
+                where=where,
+                summary=obj["summary"].rstrip("."),
+            )
         if kind == "jokes":
-            return f"an inside joke you have with {call}: {obj['text']}"
+            return say("memory.inside_joke", name=call, joke=obj["text"])
         if kind == "shared":
-            return f"something you and {call} have in common: {obj['text']}"
+            return say("memory.in_common", name=call, thing=obj["text"])
         return str(obj)
 
     async def remember(self, user, query):
@@ -108,15 +111,12 @@ class RecallMixin:
         call = (self.call_name(d) if d else None) or self.name_of(user)
         hits = await self.search(d, query, 5) if d else []
         if not hits:
-            return (
-                f'You searched your memory for "{cut(query, 80)}" with {call} and found nothing, so you don\'t '
-                f"remember that. Say so honestly (or ask them to remind you), don't make anything up."
-            )
+            return say("memory.remember_nothing", query=cut(query, 80), name=call)
         now = time.time()
         return (
-            f'What you remember with {call} about "{cut(query, 80)}": '
+            (say("memory.remember_found", name=call, query=cut(query, 80)) + " ")
             + "; ".join(self._line(d, kind, obj, call, now) for kind, obj in hits)
-            + ". Only this, nothing more: don't add details you don't actually remember."
+            + wording("memory.remember_only_this")
         )
 
     def _last_episodes(self, d, n=2, now=None):
@@ -131,10 +131,7 @@ class RecallMixin:
         d = self.get(user.id)
         feelings = getattr(self.app, "feelings", None)
         if not d or (d["talks"] < 3 and not d["facts"] and not d["slots"] and not d.get("episodes")):
-            first = (
-                f"You're talking with {name}, you don't really know them yet. You haven't talked before, so "
-                f"there's nothing you remember with them."
-            )
+            first = say("memory.stranger", name=name)
             feeling = feelings.regard_note(user, d, name) if d and feelings and feelings.stands_out(d, user.id) else ""
             profile = self.profile_line(d, name) if d and full else ""
             return f"{first} {profile} {feeling}".strip()
@@ -146,46 +143,40 @@ class RecallMixin:
         if d.get("rel"):
             rel = d["rel"]
         elif d["talks"] >= 60 and like >= 35:
-            rel = "one of your close friends"
+            rel = wording("memory.rel_close_friend")
         elif d["talks"] >= 15 and like > -8:
-            rel = "a friend of yours"
+            rel = wording("memory.rel_friend")
         elif d["talks"] >= 15:
-            rel = "someone you know from around here"
+            rel = wording("memory.rel_known")
         elif d["talks"] >= 3:
-            rel = "someone you've talked to a few times"
+            rel = wording("memory.rel_few_times")
         else:
-            rel = "someone you're just getting to know"
+            rel = wording("memory.rel_new")
         out = [
-            f"You're talking with {call}"
-            + (f" (discord name {name})" if call.lower() != name.lower() else "")
+            say("memory.talking_with", name=call)
+            + ((" " + say("memory.discord_name", name=name)) if call.lower() != name.lower() else "")
             + f", {rel}."
         ]
         if "her_nick" in s:
-            out.append(
-                f'"{s["her_nick"]["v"]}" is the nickname you gave them, so when you use their name, '
-                f"call them {s['her_nick']['v']}."
-            )
+            out.append(say("memory.her_nickname", nickname=s["her_nick"]["v"], nickname2=s["her_nick"]["v"]))
         elif "nickname" in s:
-            out.append(
-                f"They want to be called {s['nickname']['v']}, so when you use their name, "
-                f"always say {s['nickname']['v']}, never {name}."
-            )
+            out.append(say("memory.wants_to_be_called", nickname=s["nickname"]["v"], name=name))
         if d.get("calls_her"):
-            out.append(f"{call} likes calling you {d['calls_her']['v']}.")
+            out.append(say("memory.calls_you", name=call, pet_name=d["calls_her"]["v"]))
         if d.get("pinned"):
             out.append(d["pinned"].rstrip())
         feeling = feelings.regard_note(user, d, call) if feelings is not None else ""
         if feeling:
             out.append(feeling)
         if d.get("gap_days"):
-            out.append(f"You haven't talked in {d['gap_days']} days.")
+            out.append(say("memory.not_talked_in", days=d["gap_days"]))
         if full and d.get("portrait"):
-            out.append(f"Who {call} is to you: {d['portrait'].rstrip()}")
+            out.append(say("memory.who_they_are", name=call, portrait=d["portrait"].rstrip()))
         if full and d.get("talk_style"):
-            out.append(f"How you are with {call}: {d['talk_style'].rstrip()}")
+            out.append(say("memory.how_you_are", name=call, talk_style=d["talk_style"].rstrip()))
         about = self.slot_summary(d)
         if about:
-            out.append(f"What you know about {call}: {about}.")
+            out.append(say("memory.what_you_know", name=call, about=about))
         profile = self.profile_line(d, call) if full else ""
         if profile:
             out.append(profile)
@@ -199,15 +190,18 @@ class RecallMixin:
             ):
                 verb = "are" if key == "pronouns" else "is"
                 out.append(
-                    f"They told you {said_ago(slot['t'], now)} that their {SLOT_LABELS[key]} {verb} "
-                    f"{self._slot_value(d, key)} (you thought {slot['prev'][0]['v']} before)."
+                    say(
+                        "memory.changed_field",
+                        when=said_ago(slot["t"], now),
+                        field=SLOT_LABELS[key],
+                        verb=verb,
+                        value=self._slot_value(d, key),
+                        old=slot["prev"][0]["v"],
+                    )
                 )
         age = self.current_age(d)
         if age is not None and age < 18:
-            out.append(
-                f"{call} is {age}, a minor. Keep everything with them friendly and age-appropriate: "
-                f"no flirting, nothing romantic or sexual."
-            )
+            out.append(say("memory.is_minor", name=call, age=age))
         b = s.get("birthday")
         if b and b.get("md"):
             nxt = birthday_in(today.year, b["md"])
@@ -215,36 +209,53 @@ class RecallMixin:
                 nxt = birthday_in(today.year + 1, b["md"])
             days = (nxt - today).days
             if days == 0:
-                out.append(f"Today is {call}'s birthday!")
+                out.append(say("memory.birthday_today", name=call))
             elif days <= 7:
-                out.append(f"{call}'s birthday is in {days} day{'s' if days > 1 else ''}.")
+                out.append(say("memory.birthday_soon", name=call, days=days, s="s" if days > 1 else ""))
             elif (today - birthday_in(today.year, b["md"])).days in range(1, 4):
-                out.append(f"{call}'s birthday was a few days ago.")
+                out.append(say("memory.birthday_was", name=call))
         if d.get("bond") and not (full and d.get("portrait")):
-            out.append(f"How you two get along: {d['bond'].rstrip('.!')}.")
+            out.append(say("memory.get_along", bond=d["bond"].rstrip(".!")))
         act = activity.summary(d, now)
         if act:
-            out.append(f"What {call} does on discord: {act}.")
+            out.append(say("memory.on_discord", name=call, activity=act))
         if full:
             if d.get("jokes"):
-                out.append(f"Inside jokes you have with {call}: " + "; ".join(j["text"] for j in d["jokes"]) + ".")
+                out.append(
+                    (say("memory.inside_jokes", name=call) + " ") + "; ".join(j["text"] for j in d["jokes"]) + "."
+                )
             if d.get("shared"):
-                out.append(f"You and {call} both: " + "; ".join(j["text"] for j in d["shared"]) + ".")
+                out.append((say("memory.you_both", name=call) + " ") + "; ".join(j["text"] for j in d["shared"]) + ".")
             if d.get("avoid"):
-                out.append(f"Stay away from with {call}: " + "; ".join(j["text"] for j in d["avoid"]) + ".")
+                out.append(
+                    (say("memory.stay_away_from", name=call) + " ") + "; ".join(j["text"] for j in d["avoid"]) + "."
+                )
             if d.get("history"):
-                out.append(f"Your history with {call}: {d['history'].rstrip()}")
+                out.append(say("memory.history", name=call, history=d["history"].rstrip()))
         earlier = self._last_episodes(d, 2 if full else 1, now)
         if earlier:
             last = earlier[-1]
-            where = f", in {last['where']}" if last.get("where") else ""
-            line = f"Last time you talked ({said_ago(last.get('u', last['t']), now)}{where}): {last['summary'].rstrip('.')}."
+            where = say("memory.last_place", place=last["where"]) if last.get("where") else ""
+            line = say(
+                "memory.last_time",
+                when=said_ago(last.get("u", last["t"]), now),
+                where=where,
+                summary=last["summary"].rstrip("."),
+            )
             if len(earlier) > 1:
-                line += f" Before that ({said_ago(earlier[-2].get('u', earlier[-2]['t']), now)}): {earlier[-2]['summary'].rstrip('.')}."
+                line += " " + say(
+                    "memory.before_that",
+                    when=said_ago(earlier[-2].get("u", earlier[-2]["t"]), now),
+                    summary=earlier[-2]["summary"].rstrip("."),
+                )
             out.append(line)
         threads = [t for t in d.get("threads", []) if not t.get("done")]
         if threads and full:
-            out.append(f"Still open with {call}: " + "; ".join(t["text"].rstrip(".") for t in threads[-3:]) + ".")
+            out.append(
+                (say("memory.still_open", name=call) + " ")
+                + "; ".join(t["text"].rstrip(".") for t in threads[-3:])
+                + "."
+            )
         upcoming, passed = [], []
         for f in d["facts"]:
             if f.get("cat") != "plans":
@@ -255,26 +266,20 @@ class RecallMixin:
             else:
                 upcoming.append(f"{f['text']}" + (f" ({until(when, today)})" if when else ""))
         if upcoming:
-            out.append(f"Coming up for {call}: " + "; ".join(upcoming[:4]) + ".")
+            out.append((say("memory.coming_up", name=call) + " ") + "; ".join(upcoming[:4]) + ".")
         if passed:
-            out.append(f"Recently for {call}: " + "; ".join(passed[:3]) + ". You could ask how it went.")
+            out.append(
+                (say("memory.recently", name=call) + " ") + "; ".join(passed[:3]) + wording("memory.ask_how_it_went")
+            )
         picked = self.pick_facts(d, context, self.facts_in_prompt if full else 4, now)
         said = [f["text"] for f in picked if not unsure(f)]
         heard = [f["text"] for f in picked if unsure(f)]
         if said:
-            out.append(f"Things {call} told you: " + "; ".join(said) + ".")
+            out.append((say("memory.told_you", name=call) + " ") + "; ".join(said) + ".")
         if heard:
-            out.append(
-                f"Things other people said about {call}, not {call} themselves (you're not sure they're true, "
-                f"don't state them as fact): " + "; ".join(heard) + "."
-            )
+            out.append((say("memory.heard_about", name=call) + " ") + "; ".join(heard) + ".")
         if said or about or earlier or upcoming or passed or d.get("portrait"):
-            out.append(
-                "Use what you remember the way someone who really knows them would: bring one thing up only when it fits, "
-                "never list facts, and don't ask about things you already know. What's written here is all "
-                "you remember: if they bring up something from before that isn't here, you don't remember "
-                "it, so say so or ask. Never make up things you did or talked about together."
-            )
+            out.append(wording("memory.use_it_naturally"))
         return " ".join(out)
 
     def others_blurb(self, users, context=""):
@@ -292,13 +297,13 @@ class RecallMixin:
             if d["talks"] < 3 and not d["facts"] and not self.call_name(d):
                 continue
             label = call + (
-                f" (discord name {self.name_of(u)}, call them {call})"
+                (" " + say("memory.discord_name_call", discord_name=self.name_of(u), name=call))
                 if call.lower() != self.name_of(u).lower()
                 else ""
             )
             bits = [b for b in [self.slot_summary(d, public=True)] if b]
             bits += [
-                f["text"] + (" (heard, not sure)" if unsure(f) else "")
+                f["text"] + ((" " + wording("memory.heard_short")) if unsure(f) else "")
                 for f in self.pick_facts(d, context, 3, public=True)
             ]
             games = activity.games_summary(d.get("activity") or {}, n=1)
@@ -306,11 +311,14 @@ class RecallMixin:
                 bits.append(games)
             if (bits or label != call) and len(lines) < 4:
                 lines.append(label + (": " + "; ".join(bits) if bits else ""))
-        out = ("Other people in this chat you know: " + " | ".join(lines) + ".") if lines else ""
+        out = ((wording("memory.others_here") + " ") + " | ".join(lines) + ".") if lines else ""
         if minors:
             out += (" " if out else "") + (
-                f"{', '.join(minors)} {'is a minor' if len(minors) == 1 else 'are minors'}, "
-                f"so keep the whole chat age-appropriate: no flirting, nothing sexual."
+                say(
+                    "memory.minors_here",
+                    names=", ".join(minors),
+                    are=wording("memory.is_a_minor") if len(minors) == 1 else wording("memory.are_minors"),
+                )
             )
         return out
 
@@ -327,18 +335,18 @@ class RecallMixin:
         if b and b.get("md"):
             days = (birthday_in(today.year, b["md"]) - today).days
             if days == 0:
-                out.append(f"it's {call}'s birthday today")
+                out.append(say("memory.hook_birthday_today", name=call))
             elif days == 1:
-                out.append(f"{call}'s birthday is tomorrow")
+                out.append(say("memory.hook_birthday_tomorrow", name=call))
         for f in d["facts"]:
             when = parse_date(f["when"]) if f.get("cat") == "plans" and f.get("when") else None
             if when is None:
                 continue
             n = (when - today).days
             if 0 <= n <= 2:
-                out.append(f"{call} {f['text']} ({until(when, today)})")
+                out.append(say("memory.hook_plan", name=call, plan=f["text"], when=until(when, today)))
             elif -3 <= n < 0:
-                out.append(f"{call} {f['text']} ({until(when, today)}), you could ask how it went")
+                out.append(say("memory.hook_plan_passed", name=call, plan=f["text"], when=until(when, today)))
         for key, slot in d["slots"].items():
             if (
                 key in SLOT_LABELS
@@ -348,13 +356,18 @@ class RecallMixin:
                 and not unsure(slot)
             ):
                 out.append(
-                    f"{call} recently told you their {SLOT_LABELS[key]} is {self._slot_value(d, key)} "
-                    f"(you used to think {slot['prev'][0]['v']})"
+                    say(
+                        "memory.hook_changed",
+                        name=call,
+                        field=SLOT_LABELS[key],
+                        value=self._slot_value(d, key),
+                        old=slot["prev"][0]["v"],
+                    )
                 )
         fresh = now - d.get("session_start", 0) < 15 * 60
         threads = [t for t in d.get("threads", []) if not t.get("done")]
         if fresh and threads:
-            out.append("still open from before: " + "; ".join(t["text"].rstrip(".") for t in threads[-2:]))
+            out.append((wording("memory.hook_open") + " ") + "; ".join(t["text"].rstrip(".") for t in threads[-2:]))
         got = self.recalled.get(user.id)
         hits = got[1] if got and now - got[0] < 120 else self._keyword_hits(d, context, limit)
         for kind, obj in hits[:limit]:
@@ -367,12 +380,4 @@ class RecallMixin:
         if not (self.enabled and self.self_notes) or not self.own["facts"]:
             return ""
         picked = self.pick_facts(self.own, context, 8)
-        return (
-            (
-                "Things you've told people about yourself before (stay consistent with them): "
-                + "; ".join(f["text"] for f in picked)
-                + "."
-            )
-            if picked
-            else ""
-        )
+        return ((wording("memory.about_herself") + " ") + "; ".join(f["text"] for f in picked) + ".") if picked else ""

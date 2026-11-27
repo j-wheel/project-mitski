@@ -59,6 +59,8 @@ AMODS = LiveList(
 )
 MUTE_COMMANDS = {"mute", "unmute"}
 NEEDS_IDS = {
+    "block",
+    "unblock",
     "addchannel",
     "delchannel",
     "ignoreuser",
@@ -88,7 +90,6 @@ class AdminCommands(Component):
         return self.app.owner.is_owner(msg.author) and (not where or msg.channel.id == where)
 
     def can_mute(self, msg):
-        """Her owner and amods, anywhere, since mute works on the channel it's used in. It's all amods can do."""
         author, amod = msg.author, self.cfg.amod
         return (
             self.app.owner.is_owner(author)
@@ -213,7 +214,6 @@ class AdminCommands(Component):
         return self._remove(CHANNELS, self.cfg.channels, call.ids, self.channel_label, after=self.state.forget_channel)
 
     def _left(self, channel):
-        """She drops whatever she was about to say there, and leaves if it's the vc she's in."""
         self.state.forget_channel(channel.id)
         if self.app.voice.where(channel.guild) == channel:
             self.app.tasks.spawn(self.app.voice.leave("muted"), name="voice-leave")
@@ -292,6 +292,26 @@ class AdminCommands(Component):
         listing = [self.channel_label(c) for c in sorted(self.cfg.channels)]
         return [f"**her channels ({len(listing)})**\n" + ("\n".join(listing) or "none")]
 
+    async def _block(self, call):
+        out = []
+        for uid in call.ids:
+            user = self.app.get_user(uid) or self.app.client.get_user(uid)
+            if user is None:
+                try:
+                    user = await self.app.client.fetch_user(uid)
+                except discord.HTTPException as e:
+                    out.append(f"couldn't find `{uid}`: {e}")
+                    continue
+            out.append(await self.app.blocking.block(user, "told to with !block", delay=False))
+        return out
+
+    async def _unblock(self, call):
+        return [await self.app.blocking.unblock(uid) for uid in call.ids]
+
+    async def _blocked(self, call):
+        listing = [self.user_label(u) for u in sorted(self.app.blocking.blocked)]
+        return [f"**blocked ({len(listing)})**\n" + ("\n".join(listing) or "nobody")]
+
     async def _listusers(self, call):
         listing = [self.user_label(u) for u in sorted(self.cfg.ignored)]
         return [f"**ignored users ({len(listing)})**\n" + ("\n".join(listing) or "nobody")]
@@ -335,8 +355,6 @@ class AdminCommands(Component):
         return [f"**reminders ({len(rows)})**\n" + ("\n".join(rows) or "none")]
 
     async def _printchat(self, call, channel):
-        """Her whole dm with someone, styled like discord, as a pdf (--pdf, the default) or one long png (--png), sent
-        to the channel the command was used in."""
         flag = EXPORT_FLAG.search(call.rest)
         kind = flag.group(1).lower() if flag else "pdf"
         who = EXPORT_FLAG.sub(" ", call.rest).strip()
@@ -381,7 +399,6 @@ class AdminCommands(Component):
         log.info("printed the dm %s: %s", title, note)
 
     async def _dm_for(self, call, text):
-        """The dm (or group dm) a command means: a dm channel id, a user id or mention, or a name."""
         for i in call.ids:
             found = self.app.get_channel(i)
             if isinstance(found, (discord.DMChannel, discord.GroupChannel)):
@@ -498,18 +515,3 @@ class AdminCommands(Component):
         mins = int(rest[0]) if rest and rest[0].isdigit() else 30
         self.app.away.quiet(server.id if server is not None else ALL, mins)
         return [f"completely quiet in {where} for {mins} min"]
-
-    async def _orders(self, call):
-        args, owner = call.rest.split(), self.app.owner
-        verb = args[0].lower() if args else ""
-        if verb == "add" and len(args) > 1:
-            o = owner.add_order(" ".join(args[1:]))
-            return [f"+ order {o['id']}: {o['text']}" if o else "she already has that one"]
-        if verb in ("forget", "remove", "drop") and len(args) > 1:
-            gone = owner.drop_orders(re.findall(r"\d+", " ".join(args[1:])))
-            return ["\n".join(f"- order {o['id']}: {o['text']}" for o in gone) or "no such order"]
-        if verb == "clear":
-            owner.drop_orders([o["id"] for o in owner.data["orders"]])
-            return ["all orders cleared"]
-        listing = owner.orders_listing()
-        return [f"**standing orders from {self.app.situation.owner_call()}**\n{listing or 'none'}"]

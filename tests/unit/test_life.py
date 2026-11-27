@@ -27,7 +27,9 @@ def at(day, hhmm, days=0):
 
 
 def spells_of(built):
-    return [(datetime.fromisoformat(a), datetime.fromisoformat(b), lvl, what) for a, b, lvl, what in built["spells"]]
+    return [
+        (datetime.fromisoformat(a), datetime.fromisoformat(b), lvl, what) for a, b, lvl, what, *_ in built["spells"]
+    ]
 
 
 def test_a_plan_becomes_ordered_spells_with_a_night_after_midnight():

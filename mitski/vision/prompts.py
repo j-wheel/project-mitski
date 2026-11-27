@@ -1,14 +1,9 @@
 import re
 
+from mitski.core.texts import say, wording
 from mitski.llm.prompt_format import scrub, strip_thinking
 
-RULES = (
-    "If there's text in it (memes, screenshots, captions), quote the important text exactly. "
-    "If it shows people, describe how they look and what they're doing, but don't guess who they are. "
-    "If it's sexual or gory, only say that it's nsfw or gore, no details. "
-    'Write it as a plain, neutral description, like an alt text: no opinions, no "it\'s cute" or "what a nice '
-    'picture", no exclamation marks, don\'t talk to anyone, no intro like "this image shows".'
-)
+RULES = wording("media.image_rules")
 CHATTY = re.compile(
     r"\bvibes?\b|\b(?:cute|adorable|wholesome|lovely|cheerful|beautiful|nice|fun|happy|sweet)\s*,?\s*"
     r"(?:\w+\s+)?(?:picture|photo|image|shot|pic|moment|selfie)\b|^(?:it'?s|what) (?:just )?an? "
@@ -22,8 +17,8 @@ INTRO = re.compile(
 QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "[": "(", "]": ")"})
 DETAIL_KINDS = {
     "screenshot": "screenshot",
-    "gif": "gif (these are frames from it, in order)",
-    "video": "video (these are frames from it, in order)",
+    "gif": wording("media.kind_gif"),
+    "video": wording("media.kind_video"),
 }
 
 
@@ -36,7 +31,7 @@ DETAIL_MAX = 1800
 
 
 def shorten(text, limit):
-    """Under limit characters, ending on a whole sentence where there is one, so nothing reads cut off."""
+
     if len(text) <= limit:
         return text
     head = text[:limit]
@@ -70,47 +65,28 @@ def tidy_detail(text):
 
 
 def caption_prompt(item, n_frames, said, sticker_desc=""):
-    context = f' They sent it with the message: "{said[:200]}".' if said else ""
+    context = (" " + say("media.sent_with", message=said[:200])) if said else ""
     if item.kind == "sticker":
         return (
-            f'This is a discord sticker called "{item.name}"'
+            say("media.sticker_called", name=item.name)
             + (f" ({sticker_desc})" if sticker_desc else "")
             + "."
-            + (f" These are {n_frames} frames of its animation." if n_frames > 1 else "")
-            + " In one short sentence, say what it shows and what reaction or emotion it's used for. "
+            + ((" " + say("media.sticker_frames", n_frames=n_frames)) if n_frames > 1 else "")
+            + (" " + wording("media.sticker_describe") + " ")
             + RULES
         )
     if item.kind == "gif":
-        frames = (
-            f"These are {n_frames} frames from an animated gif, in order (left to right, top to bottom)."
-            if n_frames > 1
-            else "This is a gif someone sent in a discord chat."
-        )
-        hint = f' Its link calls it "{item.hint}".' if item.hint else ""
-        return (
-            frames + hint + context + " In 1 or 2 short factual sentences, say what happens in it and what "
-            "reaction or mood it's used for. " + RULES
-        )
+        frames = say("media.gif_frames", n_frames=n_frames) if n_frames > 1 else wording("media.gif")
+        hint = (" " + say("media.gif_link", hint=item.hint)) if item.hint else ""
+        return frames + hint + context + (" " + wording("media.gif_describe") + " ") + RULES
     if item.kind == "video":
-        return (
-            f"These are {n_frames} frames from a video someone sent in a discord chat, in order (left to right, "
-            f"top to bottom).{context} In 1 or 2 short sentences, say what the video seems to be. " + RULES
-        )
-    return (
-        "Someone sent this image in a discord chat." + context + " Describe what's in it in 1 to 3 short "
-        "factual sentences. If it's a meme or reaction image, say what the joke is. If it's a screenshot, say "
-        "what app or game it's from and what matters in it. " + RULES
-    )
+        return (say("media.video", n_frames=n_frames, context=context) + " ") + RULES
+    return wording("media.image") + context + (" " + wording("media.image_describe") + " ") + RULES
 
 
 def detail_prompt(item, question):
     kind = DETAIL_KINDS.get(item.kind, item.kind)
-    return (
-        f'Someone in a discord chat asked about this {kind}: "{question[:300]}". Look at it carefully and '
-        f"answer what they asked. If they want it described or explained, describe it properly: what's in "
-        f"it, what's happening, any text in it word for word, and what the joke or point is if there is one. "
-        f"3 to 5 sentences. " + RULES
-    )
+    return (say("media.look_closer", kind=kind, question=question[:300]) + " ") + RULES
 
 
 def said_with(message):

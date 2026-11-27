@@ -11,6 +11,7 @@ from mitski.chat.patterns import NEVER
 from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import say
 from mitski.llm.client import ModelUnavailable
 
 log = logs.get("dms")
@@ -53,12 +54,10 @@ class DirectMessages(Component):
         self.accepting = asyncio.Lock()
 
     def accept_pending(self):
-        """Friend requests that came in while she was offline."""
         for relationship in list(getattr(self.app.client, "relationships", None) or []):
             self.friend_request(relationship)
 
     def friend_request(self, relationship):
-        """Someone wants to be her friend: she accepts a little later, unless it's someone she'd never talk to."""
         user = relationship.user
         if not self.cfg.FRIEND_ACCEPT or relationship.type is not discord.RelationshipType.incoming_request:
             return
@@ -71,7 +70,6 @@ class DirectMessages(Component):
         self.app.tasks.spawn(self._accept(user), name="friend-request")
 
     async def _accept(self, user):
-        """One at a time and spaced out, and only if the request is still there by then."""
         try:
             await asyncio.sleep(random.uniform(*self.cfg.FRIEND_ACCEPT_DELAY))
             async with self.accepting:
@@ -94,8 +92,6 @@ class DirectMessages(Component):
             self.friend_requests.discard(user.id)
 
     async def catch_up(self):
-        """When she comes online, she answers dms that came in while she was offline (where they messaged last),
-        newest first and a minute or so apart, like catching up on her phone, instead of leaving people on read."""
         if not self.cfg.DM_CATCH_UP:
             return
         await asyncio.sleep(random.uniform(*CATCH_UP_START))
@@ -123,8 +119,6 @@ class DirectMessages(Component):
             self.app.router.catch_up(msg, age)
 
     async def _missed(self, channel):
-        """Their last message in a dm, if it still needs an answer from her, else None. A dm whose newest message is
-        older than the window is skipped without asking discord for its history, so a long dm list costs nothing."""
         newest = getattr(channel, "last_message_id", None)
         window = self.cfg.DM_CATCH_UP_HOURS * 3600
         if newest and (discord.utils.utcnow() - discord.utils.snowflake_time(newest)).total_seconds() > window:
@@ -148,7 +142,6 @@ class DirectMessages(Component):
         return last
 
     def _answered_since(self, msg):
-        """A new message came in (she'll answer that one anyway), or she already replied since she came online."""
         if (msg.channel.id, msg.author.id) in self.state.waiting:
             return True
         last = self.app.sender.last_sent.get(msg.channel.id)
@@ -242,11 +235,7 @@ class DirectMessages(Component):
             theirs = [m for m in msgs if m.author.id == user.id]
             anchor = theirs[-1] if theirs else None
             if promise:
-                note = (
-                    f'You just told {self.messages.call(user)} in #{channel} that you\'d dm them (you said: "{cut(promise, 200)}"). '
-                    f"This is that dm, you're messaging them like you said you would. "
-                    f"Pick up from what you were talking about, don't make a big deal of it."
-                )
+                note = say("dms.promised", name=self.messages.call(user), channel=channel, promise=cut(promise, 200))
                 if not turns or turns[-1][0] == "assistant":
                     turns.append(["user", ""])
                 notes = self.app.situation.notes("dm_open", dm, anchor, msgs, [note]) if anchor else note
@@ -254,10 +243,7 @@ class DirectMessages(Component):
             else:
                 if not turns:
                     return
-                note = (
-                    f"You're sliding into {self.messages.call(user)}'s DMs after chatting with them in #{channel}. "
-                    f"Keep going from what you were talking about, like a friend would."
-                )
+                note = say("dms.sliding_in", name=self.messages.call(user), channel=channel)
                 notes = self.app.situation.notes("dm_open", dm, anchor, msgs, [note]) if anchor else note
                 prompt = self.llm.prompt(turns, self.app.situation.persona(user), notes, reopen=True)
             text = await self.llm.generate(prompt)

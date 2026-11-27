@@ -81,14 +81,6 @@ async def test_goodnight_gets_a_reply(world, always_lets_go):
     assert world.sent_text() == ["sleep well then", "gn"]
 
 
-async def test_the_owner_is_never_let_go(world, always_lets_go):
-    world.replies.append("cats are the best")
-    await world.send(world.owner, "mitski cats or dogs")
-    world.replies.append("lmao")
-    await world.send(world.owner, "lol", to_her=False)
-    assert world.sent_text() == ["cats are the best", "lmao"]
-
-
 async def test_the_planner_saying_no_reply_is_believed(world, always_lets_go):
     anna = world.people["anna"]
     world.replies.append("have fun")
@@ -330,8 +322,6 @@ def planner_splits(world, topics):
 
 
 async def test_a_few_remarks_in_a_row_get_one_reply_not_an_answer_each(world, layout):
-    """The real one: "DONT LEAVE ME I'll get separation anxiety / 😭 😭 / woah she went therapy mode" was split
-    into three things to answer, and she sent one of their messages back to them."""
     layout(shape.BLOCK)
     planner_splits(world, [1, 2, 3])
     world.replies.extend(

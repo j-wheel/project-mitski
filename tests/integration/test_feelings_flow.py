@@ -17,7 +17,6 @@ def remembering(world):
 
 
 def reply_prompt(world):
-    """Her last reply prompt: memory notes run after replies and go through the same model."""
     return next(p for p in reversed(world.prompts) if "keep mitski's memory" not in p)
 
 

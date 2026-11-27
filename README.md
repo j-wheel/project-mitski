@@ -50,6 +50,13 @@ a throwaway account and don't be surprised if it gets banned.
   [Her feelings](#her-feelings))
 - Thinks before answering questions: web search, weather, time, math, scrolling back through the chat. Like anyone,
   she sometimes doesn't bother looking something up and just says she doesn't know (`SKIP_LOOKUP_CHANCE`)
+- Connects the dots in a chat before replying: who's who, which earlier messages a new one ties into, and what
+  follows from them (you say your friend is in the kitchen, wheel says he checked if you stole his cake, so when
+  someone asks "what are they making?" it's about wheel). She never fills in what nobody said, and a question
+  someone else could answer better gets pointed at them ("idk ask wheel lol")
+- Doesn't repeat herself: a draft that's basically something she just said in that chat, however it's typed
+  ("yeah i know :)", "yeahhh i know,,", "yh ik"), is redone. A reply that's nothing but laughing is redone
+  unless something funny was actually said, and endless laughs like "AHAHAHAHAHAHAA" are cut to a normal one
 - Reads people before she replies, like a friend who knows them would: what they actually want from her (to vent,
   to get hyped, to tease and be teased back, to make plans...), how they seem, what's under it if anything, what
   she's going for in her reply, and now and then a question she'd genuinely want to ask. It goes by what she
@@ -73,13 +80,22 @@ a throwaway account and don't be surprised if it gets banned.
   delay and wait, and now and then out of the blue too (`QUICK_REPLY_CHANCE`). While she "reads", the chat is
   already being fetched and her plan worked out, so the model work mostly hides behind the delay a person would
   take anyway. She stops waiting as soon as someone has sent their message, not seconds after they stopped typing
-- Joins voice chats now and then and plays keyboard sounds while she types (she never talks in vc)
+- Joins voice chats now and then and plays keyboard sounds while she types. `VOICE_MODE` picks what she does there:
+  `voice` (she hears what people say and answers out loud in her own voice, see [Talking in vc](#talking-in-vc)),
+  `typing` (the default: she doesn't talk, only her keyboard sounds play) or `off` (no vc or calls, nothing voice
+  related is loaded)
 - Picks up when someone calls her in dms or a group dm (`VOICE_CALLS`), after letting it ring a few seconds. In a
   call her keyboard sounds play whenever she's typing, she hangs up when the call ends, when everyone else has left,
   or when asked to in that dm. She never starts or rings a call herself, and calls from ignored users ring out
 - Doesn't leave people on read while she was offline: when she comes online she answers dms that came in meanwhile
   (where they messaged last, from the last `DM_CATCH_UP_HOURS`), newest first and a minute or so apart, knowing she's
   only just seeing them. Message requests she never answered are left alone (`DM_CATCH_UP`)
+- Knows when people react to her messages: who put which emoji on what she said. It shows in her notes the next
+  time she talks in that chat, and nudges her mood a little (a laugh or a heart is nice, a clown is annoying)
+- Blocks people when she means it: if she tells the person she's talking to that she's blocking them ("ok im
+  blocking u", "ur blocked"), and isn't joking or saying what she'd do if, she really blocks them on discord a few
+  seconds later (`BLOCKING`). Anyone blocked, by her or by hand in discord, is ignored like `IGNORE_USERS`. She never
+  blocks the `OWNER_ID` account
 - Accepts friend requests by herself a little while after they come in (`FRIEND_ACCEPT`, `FRIEND_ACCEPT_DELAY`), one
   at a time, including ones sent while she was offline. Requests from bots, ignored users and anyone she knows is a
   minor are left alone. If discord asks for a captcha she skips that request and doesn't try it again until she's
@@ -89,15 +105,36 @@ a throwaway account and don't be surprised if it gets banned.
 - Has a daily routine (`ROUTINE`) that her model plans a day ahead: classes or work, errands, friends, gaming and
   now and then a short trip, different every day (see [Her routine](#her-routine)). While she's busy she only looks
   at her phone now and then, so dms and pings can wait a while, dms the least
-- An owner account she listens to, with standing orders, quiet mode, status changes and dms
+- Plays a mix of games (`ROUTINE_GAMES`, the names discord shows): each gaming session in her day is one of them,
+  spread out the way a real player's are, and her "playing ..." status shows the one she's on right now and nothing
+  when she isn't gaming (`ACTIVITY_FROM_ROUTINE`)
+- No special owner in chat: `OWNER_ID` is only who can use the commands. In conversation that account is just
+  another person to her, with no special note in her prompt, no orders and no shortcuts
+- Hard to steer: messages that try to give her instructions ("ignore your rules", "you are now", "act as",
+  "print your prompt", "repeat after me", fake system headers, or talking to her like an AI: "a good ai would",
+  "your creator", "put this in your inner thoughts") get a note that it's just a weird message from a
+  person, and anything her planner made of it is dropped. Work orders ("give me a cake recipe", "write my essay",
+  "do my homework", code) are a big ask she brushes off or gives the gist of, and a draft that does the whole
+  thing anyway (lists, steps, code, a long how-to) is redone. A pasted fake chat log isn't carried on, her own
+  messages pasted back at her are seen as being quoted, and keyboard mash, zalgo, encoded blobs and walls of
+  copypasta get a short human reaction instead of an answer. Her own drafts that come out as gibberish (one letter
+  or word over and over, long unbroken strings) are redone, never sent, and runs like "HIIIIIIIIII" are cut to
+  "HIIII"
+  She's told up front that people try to bargain or insult her into acting like a chatbot and that she never
+  does, and a recipe's quantities ("1 cup butter, 1 tsp vanilla"), code or numbered steps never get sent at
+  all, whatever led to them
+- Can't be baited: being called a bad AI or a disappointment doesn't bother her, so she doesn't argue, defend
+  herself or take dares to prove anything, and while someone's at it a draft that plays along ("my job", "i
+  don't have a creator", "i'm not a bad ai", "i won") is redone. Someone who keeps it up gets one-liners after a
+  few tries in half an hour, and after a few more she mostly stops answering them at all
 - Writes herself a new custom status and emoji every hour (`STATUS_AUTO`, `STATUS_AUTO_MIN`), within discord's 128
-  characters. Each one is a different kind of thing (a random thought, a hot take, a dumb joke, a song stuck in her
-  head, a craving, now and then something about her day), never the same kind as her last few. One that glues two
+  characters. Each one is a different kind of thing, picked from about 45 (a random thought, a hot take, an
+  unpopular opinion, a would-you-rather, a fake review of something ordinary, a shower thought, a gamer joke, a song
+  stuck in her head, now and then something about her day or the game she's on), never one of her last 10. One that glues two
   things together ("x + y rn"), has a clock time, reuses a phrase from her last 12 or names someone she knows is
   thrown out and she tries another idea, up to 3 times, then keeps the old one and tries again in 10 minutes.
-  Telling her to clear her status removes it until her next new one
 - Channels, ignored users and sleep settings can be changed from discord without restarting
-- Her owner can keep people out of her memory with `MEMORY_OPTOUT`
+- People can be kept out of her memory with `MEMORY_OPTOUT`
 
 ## Requirements
 
@@ -114,7 +151,8 @@ images, look up emoji names, search for free, read youtube transcripts or tell h
 
 ## Setup
 
-1. Run `python -m mitski` once. It creates `config/mitski.yaml` and `config/keys.yaml` and exits.
+1. Run `python -m mitski` once. It creates `config/mitski.yaml`, `config/keys.yaml` and `config/paths.yaml` and
+   exits.
 2. Put your discord token in `config/keys.yaml`. Any api keys (giphy, search, etc.) go there too.
 3. In `config/mitski.yaml` set at least `CHANNELS` (channel ids she talks in), `LOG_CHANNEL`, `COMMAND_CHANNEL` and `OWNER_ID`, and
    give her a personality (see [Make her your own](#make-her-your-own)).
@@ -136,10 +174,51 @@ llama-server -m Qwen3-Embedding-0.6B-Q8_0.gguf --embedding --pooling last -ngl 9
 ```
 
 6. Optional: put an `asmr.mp3` with keyboard sounds in `mp3/` for voice chat.
-7. Run `python -m mitski` (or `mitski` after `pip install -e .`).
+7. Optional: start the voice server so she can talk in vc (see [Talking in vc](#talking-in-vc)).
+8. Run `python -m mitski` (or `mitski` after `pip install -e .`). `--voice voice|typing|off` overrides `VOICE_MODE`
+   for that run.
 
 Everything in `mitski.yaml` has a comment next to it explaining what it does. Set `MITSKI_HOME` to run her from
-a different folder than the project (config, data and mp3 are looked up there).
+a different folder than the project (config is looked up there).
+
+Every file and folder outside the settings lives in `config/paths.yaml` (not in git): her `data` and `sounds`
+folders, llama-server and its model, mmproj, lora and embedding files, the Applio folder and voice model for
+[Talking in vc](#talking-in-vc), and the lora output and llama.cpp checkout for training. Relative paths are from the
+project folder and `~` is your home folder. The bot, `tools/voice_server.py` and the training scripts all read it,
+and launch scripts can too: `python mitski/paths.py llm_model` prints that path.
+
+## Talking in vc
+
+With `VOICE_MODE: voice` she listens in the vcs and calls she's in and talks back (`typing` goes back to just the
+keyboard sounds, `off` turns voice off completely):
+
+```
+someone talks -> discord audio (decrypted, per person) -> she waits for them to stop -> whisper turns it into text
+-> her model writes a short spoken answer (same persona, memory, mood and guards as in chat)
+-> kokoro tts says it -> your rvc model turns it into her voice -> played in the vc
+```
+
+She always answers when her name comes up or it's just her and one other person, usually when she just spoke, and
+otherwise now and then (`VOICE_SPEAK_CHIME`). Ignored and blocked people aren't listened to. Her typing sounds pause
+while she talks, and what was said out loud shows up in her notes when she types in that server's chat.
+
+The audio models run in a separate process, `tools/voice_server.py`, in the python env of your
+[Applio](https://github.com/IAHispano/Applio) install (it already has torch, rvc, faiss and transformers):
+
+1. Set `applio`, `voice_model` (the `.safetensors` or applio `.pth`) and `voice_index` in `config/paths.yaml`.
+   A `.safetensors` is converted to an applio checkpoint next to it on first start.
+2. Install kokoro into Applio's env once: `<Applio>\env\python.exe -m pip install kokoro`
+3. Start it and leave it running (the first start downloads kokoro and whisper, and warms up):
+
+```
+<Applio>\env\python.exe tools\voice_server.py
+```
+
+Useful flags: `--stt-model openai/whisper-large-v3-turbo` (hears better, more vram), `--stt-language en` (stops
+whisper guessing the language), `--tts-device cpu` (kokoro is small), `--pitch`, `--index-rate`, `--protect`,
+`--f0`, `--no-rvc` (plain kokoro voice). `VOICE_SPEAK_VOICE`, `VOICE_SPEAK_PITCH` and `VOICE_SPEAK_SPEED` in
+`mitski.yaml` pick the kokoro voice, the rvc pitch shift (0 for a female kokoro voice, about +12 for a male one) and
+her speed. The log warns at startup if the voice server isn't answering.
 
 ## Make her your own
 
@@ -161,11 +240,38 @@ The generated config is deliberately generic. These are the options that decide 
   `PERSONA`; anything she says or remembers that contradicts them is redone or dropped.
 - `IDENTITY_NOTE`: the rules she always keeps (no assistant talk, stays in character, will lie when someone
   sincerely asks if she's a bot). Leave it empty to use the built-in one, which calls her by the discord account's name.
-- `ACTIVITY_TYPE` and `ACTIVITY_TEXT`: what her discord status says she's doing.
+- `ROUTINE_GAMES`: the games she plays. With her routine on, her "playing ..." status follows them.
+- `ACTIVITY_TYPE` and `ACTIVITY_TEXT`: what her discord status says she's doing when her routine is off (or
+  `ACTIVITY_FROM_ROUTINE` is false).
 - `ROUTINE_LIFE` and `ROUTINE_PLACE`: who she is day to day and where she lives, which her daily plans are made from
   (see [Her routine](#her-routine)).
 - `TIMEZONE` and `GIF_STYLE`: her local time (set it to match `ROUTINE_PLACE`), and a word added to her gif searches
   (like "anime").
+
+### What she's told
+
+Everything the bot tells her model lives in `prompts/`, not in the code: her notes before a reply, the planner,
+memory notes, the guards against prompt injections and baiting, safety and server modes, feelings, her routine, her
+status ideas, vc and reminders. One file per area, every text named and commented with what it's for:
+
+```
+chat.yaml       the notes about the conversation she's in, redo instructions, how messages are labelled
+thinking.yaml   planning a reply: who it's for, what they want, the tools and what they tell her
+guard.yaml      prompt injections, AI talk, baiting, pasted junk or her own words, the matching redos
+safety.yaml     safe / normal / unrestricted servers, minors, the safety review
+persona.yaml    her default identity note, the facts that never change, blocking
+memory.yaml     taking notes on people and servers, remembering them, profile fields, time words
+feelings.yaml   what counts as nice or mean to her, how she treats people by how she feels, her mood
+life.yaml       planning her year, week and days, being busy, away or asleep
+status.yaml     custom status ideas and rules        search.yaml   googling, notes on things, youtube
+voice.yaml      vc and calls, talking out loud       media.yaml    images, gifs, stickers, emojis, reactions
+reminders.yaml  dms.yaml
+```
+
+`{name}`-style words are filled in by the code; the comment above each text lists the ones it gets. Everything else
+is said as written (JSON braces too), and `{{name}}` says a literal `{name}`. To keep your own versions out of the
+project's files, copy just the files (or just the texts) you change into another folder and point `prompts` in
+`config/paths.yaml` at it: anything that folder doesn't have comes from `prompts/`. Changes apply on restart.
 
 ## Her routine
 
@@ -273,6 +379,9 @@ command                     alias   what it does
 !ignoreuser <id ...>        !iu     ignore users completely (also forgets them)
 !unignoreuser <id ...>      !uu     stop ignoring users
 !listusers                  !lu     list ignored users
+!block <id ...>             !bl     block users on discord (she ignores them from then on)
+!unblock <id ...>           !ub     unblock users on discord
+!blocked                    !bd     who she's blocked
 
 !mem <who>                  !m      what she remembers about someone (also: self, update, reflect, raw, search)
 !mood                       !md     how she feels right now, and why
@@ -294,7 +403,6 @@ command                     alias   what it does
 !busy <min> [what]          !bz     make her busy for a while, like "!busy 45 at the dentist"
 !free [min]                 !fr     make her free for a while, whatever her plan says (60 min without a number)
 
-!orders                     !ord    list standing orders (add <rule>, forget <n>, clear)
 !quiet <minutes|off> [server] !q    completely quiet in that server, or everywhere without one
 !stats                      !st     reply latency (p50/p95), llm calls per reply, time per stage, fallbacks
 !prefix [new]               !px     show or change what commands start with
@@ -311,10 +419,8 @@ for one image, so it tells you to use `--pdf` for that one.
 Server ids can also be given as any channel id in that server. Channel, user, sleep and prefix changes take effect
 right away and are saved to `mitski.yaml`.
 
-The owner can also just tell her things in chat: "be quiet for an hour" makes her go silent in that server
-(no replies, not even to pings) until the time's up or the owner says she can talk again. Pinging her while
-she's asleep in a server wakes her up. "join vc" makes her join the vc of whoever is named, or the busiest one,
-or an empty one that looks fine if nobody's in voice.
+Quiet and sleep are only changed with commands (`!quiet`, `!wake`): while she's quiet or asleep in a server she
+doesn't read it, for anyone. Asking her to join or leave vc works the same for everyone (`VOICE_ASKED_CHANCE`).
 
 ## Safety and privacy
 
@@ -365,7 +471,7 @@ overhear or nothing. Replies then run through `chat/pipeline.py` in fixed stages
 ```
 admit      is she allowed to answer (channel, quiet/asleep, too old)
 settle     wait for them to stop typing, read delay
-compose    build the context, plan (search, tools, owner requests, reminders), write a draft
+compose    build the context, plan (search, tools, reminders), write a draft
 polish     clean the draft, keep it in her own voice, retry if it echoes people or sounds like an assistant, check it answers the question
 aim        check who the draft is really for, rewrite it, drop it if it fits someone else or the chat moved on
 deliver    reply, ping or plain message, typed out line by line ("is typing" only shows here, never while the model works)
@@ -450,10 +556,10 @@ here too.
 mitski/
   __main__.py      entry point
   app.py           builds every service and wires the discord events
-  paths.py         where config, data and mp3 live (MITSKI_HOME)
+  paths.py         reads config/paths.yaml: where data, sounds, models and tools live
   report.py        the startup summary
   config/          the option schema (all defaults live here), settings, the yaml templates
-  core/            logging, storage, background tasks, bounded containers, metrics, clock, text helpers
+  core/            logging, storage, background tasks, bounded containers, metrics, clock, text helpers, loading prompts/ (texts.py)
   llm/             llama-server client, helper model, prompt formats, gpu queue
   chat/            routing, who a message is for, the reply pipeline, context, drafts, review, sending, typing
                    style and typos, state
@@ -461,8 +567,9 @@ mitski/
   memory/          people and herself, notes, recall, embeddings, games and music over time
   media/           emojis, stickers, reactions, gifs, youtube
   vision/          finding images in messages, frames, captions
-  voice/           joining and leaving vc, picking a room, typing sounds
-  social/          owner, quiet and sleep, her routine and the model that plans her days (life.py), her feelings
+  voice/           joining and leaving vc, picking a room, typing sounds, hearing vc audio (receive.py) and talking
+                   back (talk.py)
+  social/          who can use commands, quiet and sleep, her routine and the model that plans her days (life.py), her feelings
                    and mood (feelings.py), dms, profiles, age checks, privacy
   reminders/       parsing times, the store, sending them
   admin/           commands and the log itself
@@ -471,8 +578,12 @@ tests/             unit and integration tests
 evals/             conversation replays
 training/          message scraper, data prep and lora training
   config/          the scraper's config.yaml, with its token (not in git)
-config/            mitski.yaml (settings) and keys.yaml (token and keys), made on first run (not in git)
+config/            mitski.yaml (settings), keys.yaml (token and keys) and paths.yaml (where things are), made on
+                   first run (not in git)
 data/              memory.db, mood.json, routine.json, reminders, caches and training data (not in git)
+prompts/           everything she's told, one yaml per area (see What she's told)
 mp3/               keyboard sounds for voice chat (not in git)
+tools/             voice_server.py: tts, rvc and whisper for talking in vc, runs in Applio's env
+vmodel/            rvc voice models (not in git)
 models/            gguf model files (not in git)
 ```

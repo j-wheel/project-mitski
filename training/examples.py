@@ -1,4 +1,6 @@
-LEAK_MARKERS = ("(notes only you can see", "You are ", "<|im_start|>", "What to tell them:")
+# "<|im_start|>" catches any learned span that runs past her reply into the system prompt or someone else's turn.
+# no plain "You are " here: she says that herself ("You are Canadian?"), and it stopped training on real data
+LEAK_MARKERS = ("(notes only you can see", "<|im_start|>", "What to tell them:")
 WARNED = set()
 
 

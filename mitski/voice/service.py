@@ -11,9 +11,11 @@ from mitski.core import logs
 from mitski.core.clock import DAY, per_tick
 from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
+from mitski.core.texts import fill, say, wording
 from mitski.voice.rooms import RoomPicker, joinable
 from mitski.voice.session import Session
 from mitski.voice.sounds import Typing, TypingSounds
+from mitski.voice.talk import VoiceTalk
 
 log = logs.get("voice")
 
@@ -29,19 +31,11 @@ LEAVE = re.compile(
     re.I,
 )
 CALL_ALONE_WAIT = (20, 60)
-CALL_NOTE = (
-    "You're in a call with {who} here (you picked up when they called). You don't talk in calls, you just hang out and "
-    "type, and you can't really make out what they say, so don't make up things they said in the call."
-)
-DECISION_NOTES = {
-    "join": 'You\'re about to hop into the vc with them. If it fits, say so casually (like "omw" or "ok joining"). '
-    "You don't talk in vc, you just hang out and type.",
-    "no": "You're not joining vc right now. If they asked, keep it light (not rn, maybe later).",
-    "leave": "You're leaving the vc now.",
-    "stay": "You're staying in the vc for now.",
-    "none": "You'd hop in vc, but there's no voice channel here you can get into, so say that.",
-    "move": 'You\'re switching over to the other vc now. If it fits, say so casually ("omw").',
-}
+CALL_NOTE = wording("voice.in_call_quiet")
+CALL_TALK_NOTE = wording("voice.in_call_talking")
+QUIET_IN_VC = wording("voice.quiet_in_vc")
+TALKS_IN_VC = wording("voice.talks_in_vc")
+DECISION_NOTES = wording("voice.decisions")
 
 
 class Voice(Component):
@@ -60,17 +54,22 @@ class Voice(Component):
         self.vc_talk = {}
         self.decisions = BoundedDict(300)
         self.answering = set()
+        self.talk = VoiceTalk(app)
+
+    @property
+    def on(self):
+        return self.cfg.VOICE_MODE != "off"
 
     @property
     def active(self):
-        return self.cfg.VOICE and self.problem is None
+        return self.on and self.problem is None
 
     @property
     def tick(self):
         return self.cfg.VOICE_CHECK_SEC
 
     def check(self):
-        if not self.cfg.VOICE:
+        if not self.on:
             return
         missing = [name for module, name in (("nacl", "PyNaCl"), ("davey", "davey")) if not _importable(module)]
         if missing:
@@ -90,11 +89,12 @@ class Voice(Component):
         self.sounds.load()
 
     def status(self):
-        if not self.cfg.VOICE:
+        if not self.on:
             return "off"
         if self.problem:
             return f"off ({self.problem})"
-        return f"on, {self.sounds.status()}"
+        talk = f", talking {self.talk.status()}" if self.talk.on else ""
+        return f"on, {self.sounds.status()}{talk}"
 
     def typing_in(self, channel):
         return Typing(self.sounds, channel)
@@ -127,7 +127,9 @@ class Voice(Component):
         call = getattr(self.vc.channel, "call", None)
         users = [self.app.get_user(u) for u in self._call_people(call)]
         names = [call_name(u) for u in users if u is not None]
-        return CALL_NOTE.format(who=", ".join(names[:6]) or "them")
+        note = fill(CALL_TALK_NOTE if self.talk.live else CALL_NOTE, who=", ".join(names[:6]) or "them")
+        heard = self.talk.note()
+        return f"{note} {heard}" if heard else note
 
     def note(self, guild, call_name):
         channel = self.where(guild)
@@ -136,77 +138,61 @@ class Voice(Component):
         members = [channel.guild.get_member(u) for u in self.people(channel)]
         names = [call_name(m) for m in members if m is not None]
         company = f" with {', '.join(names[:6])}" if names else ", alone"
-        return (
-            f'You\'re sitting in the voice channel "{channel.name}" on this server{company} (for '
-            f"{int(self.session.minutes)} min now). You don't talk in vc, you just hang out and type in the chat, and "
-            f"you can't really make out what they say, so don't make up things they said in vc."
-        )
+        where = say("voice.in_vc", channel=channel.name, company=company, minutes=int(self.session.minutes))
+        if not self.talk.live:
+            return say("voice.in_vc_quiet", where=where)
+        heard = self.talk.note()
+        talking = say("voice.in_vc_talking", where=where)
+        return f"{talking} {heard}" if heard else talking
 
     def decision_note(self, msg_id):
-        return DECISION_NOTES.get(self.decisions.get(msg_id), "")
-
-    def _is_owner(self, uid):
-        return self.app.owner.is_owner(uid)
+        note = DECISION_NOTES.get(self.decisions.get(msg_id), "")
+        return note.replace("{vc}", TALKS_IN_VC if self.talk.on else QUIET_IN_VC)
 
     def _away(self, guild_id):
         return self.app.away.state(guild_id) is not None
 
     def heard_in_dm(self, msg):
-        """In the dm she's in a call in, she can be asked to leave it, like in a server vc. She never joins or starts
-        a call from a message: she only ever picks up when someone calls her."""
         if not self.active or not self.in_call(msg.channel) or not LEAVE.search(msg.content or ""):
             return None
-        boss = self._is_owner(msg.author.id)
-        leave = boss or random.random() < self.cfg.VOICE_ASKED_CHANCE
+        leave = random.random() < self.cfg.VOICE_ASKED_CHANCE
         if leave:
-            why = "told to hang up" if boss else "asked to hang up"
-            self.app.tasks.spawn(self.leave(why, delay=random.uniform(2, 8)), name="call-leave")
+            self.app.tasks.spawn(self.leave("asked to hang up", delay=random.uniform(2, 8)), name="call-leave")
         return self._decide(msg, "leave" if leave else "stay")
 
     def heard(self, msg, to_her):
         if not self.active or msg.guild is None or self._away(msg.guild.id):
             return None
         text = msg.content or ""
-        boss = self._is_owner(msg.author.id)
         here = self.where(msg.guild)
         if here is not None and to_her and LEAVE.search(text):
-            leave = boss or random.random() < self.cfg.VOICE_ASKED_CHANCE
+            leave = random.random() < self.cfg.VOICE_ASKED_CHANCE
             if leave:
-                why = "told to" if boss else "asked to"
-                self.app.tasks.spawn(self.leave(why, delay=random.uniform(3, 12)), name="voice-leave")
+                self.app.tasks.spawn(self.leave("asked to", delay=random.uniform(3, 12)), name="voice-leave")
             return self._decide(msg, "leave" if leave else "stay")
         if not VC_TALK.search(text):
             return None
         self.vc_talk[msg.guild.id] = time.time()
         invited = bool(to_her and INVITE.search(text))
-        ordered = invited and boss
         if here is not None:
-            if ordered:
-                target, why = self.rooms.pick(msg, self.me.id)
-                if target is not None and target != here:
-                    self.app.tasks.spawn(self.move(target, f"her owner asked, {why}"), name="voice-move")
-                    return self._decide(msg, "move")
             return None
-        target, why = self.rooms.pick(msg, self.me.id, empty_ok=ordered)
+        target, why = self.rooms.pick(msg, self.me.id)
         if target is None:
-            return self._decide(msg, "none") if ordered else None
-        if ordered:
-            ok = self.can_join(force=True)
-        elif invited:
+            return None
+        if invited:
             ok = self.can_join() and random.random() < self.cfg.VOICE_ASKED_CHANCE
         else:
             ok = self.can_join() and random.random() < self.cfg.VOICE_TALK_CHANCE
             if not ok:
                 return None
         if ok:
-            reason = "her owner asked" if ordered else "asked" if invited else "people talked about vc"
+            reason = "asked" if invited else "people talked about vc"
             self.app.tasks.spawn(
                 self.join(
                     target,
                     f"{reason}, {why}" if why else reason,
-                    delay=random.uniform(4, 15) if ordered else random.uniform(8, 40),
+                    delay=random.uniform(8, 40),
                     solo=not self.people(target),
-                    owner_id=msg.author.id if boss else None,
                 ),
                 name="voice-join",
             )
@@ -226,18 +212,16 @@ class Voice(Component):
             return True
         return now >= self.cooldown_until and len(self.joins) < self.cfg.VOICE_MAX_PER_DAY
 
-    async def join(self, channel, why, delay=0.0, solo=False, owner_id=None):
+    async def join(self, channel, why, delay=0.0, solo=False):
         if delay:
             await asyncio.sleep(delay)
-        if not self.can_join(force=owner_id is not None) or not joinable(channel):
+        if not self.can_join() or not joinable(channel):
             return
-        if self.vc is not None:
-            if self.vc.channel == channel:
-                return
-            await self.leave("her owner wants her in another vc")
         self.busy = True
         try:
-            vc = await channel.connect(timeout=30, reconnect=True, self_mute=False, self_deaf=False)
+            vc = await channel.connect(
+                timeout=30, reconnect=True, self_mute=False, self_deaf=False, cls=self.talk.client_class()
+            )
         except Exception:
             log.warning("couldn't join %s", channel.name, exc_info=True)
             self.cooldown_until = time.time() + 600
@@ -252,12 +236,11 @@ class Voice(Component):
             stay_until=time.time() + stay,
             why=why,
             solo=solo,
-            owner=owner_id or next((u for u in ids if self._is_owner(u)), None),
-            owner_seen=any(self._is_owner(u) for u in ids),
             peak=len(ids),
             had_company=bool(ids),
         )
         self.sounds.attach(vc, channel.guild.id)
+        self.talk.attach(vc)
         self.joins.append(time.time())
         log.info(
             "joined %s / %s (%s), %d people, staying ~%.0f min",
@@ -284,8 +267,6 @@ class Voice(Component):
         return [u for u in (getattr(call, "voice_states", None) or {}) if u != me and u not in self.cfg.ignored]
 
     def call_changed(self, call):
-        """A call started or changed in a dm or group dm. If it's ringing her, she lets it ring a little, then picks
-        up. Calls from people she ignores just ring out."""
         if not (self.active and self.cfg.VOICE_CALLS) or not self._rung(call):
             return
         cid = call.channel.id
@@ -313,7 +294,7 @@ class Voice(Component):
                 return
             self.busy = True
             try:
-                vc = await live.connect(timeout=30, reconnect=True)
+                vc = await live.connect(timeout=30, reconnect=True, cls=self.talk.client_class())
             except Exception:
                 log.warning("couldn't pick up the call", exc_info=True)
                 return
@@ -328,13 +309,12 @@ class Voice(Component):
                 stay_until=float("inf"),
                 why=f"{caller or 'someone'} called her",
                 solo=False,
-                owner=next((u for u in ids if self._is_owner(u)), None),
-                owner_seen=any(self._is_owner(u) for u in ids),
                 peak=len(ids),
                 had_company=bool(ids),
                 call=True,
             )
             self.sounds.attach(vc, cid, everywhere=True)
+            self.talk.attach(vc)
             log.info("picked up a call: %s, %d people in it", who, len(ids))
             await self.app.relay.post(f"**picked up a call** {who}, {len(ids)} people in it")
         finally:
@@ -384,7 +364,7 @@ class Voice(Component):
         if self.vc is None or self.busy:
             return
         for _ in range(60):
-            if not self.sounds.heard_typing():
+            if not self.sounds.heard_typing() and not self.talk.replying.locked():
                 break
             await asyncio.sleep(1)
         if self.vc is None:
@@ -392,6 +372,7 @@ class Voice(Component):
         vc, session = self.vc, self.session
         self.busy = True
         try:
+            self.talk.detach()
             self.sounds.stop()
             name = self._call_label(vc.channel) if session.call else getattr(vc.channel, "name", "vc")
             await vc.disconnect(force=False)
@@ -404,6 +385,7 @@ class Voice(Component):
             self.busy = False
 
     def _reset(self, cooldown):
+        self.talk.detach()
         self.sounds.detach()
         self.vc, self.session = None, None
         self.cooldown_until = time.time() + cooldown
@@ -446,8 +428,6 @@ class Voice(Component):
                 continue
             known = sum(1 for u in ids if str(u) in self.memory.people)
             p = self.cfg.VOICE_JOIN_CHANCE * (1 + 0.4 * min(known, 4))
-            if any(self._is_owner(u) for u in ids):
-                p *= 3
             if now - self.vc_talk.get(channel.guild.id, 0) < 900:
                 p *= 2.5
             if late:
@@ -488,9 +468,8 @@ class Voice(Component):
             return
         s.had_company = True
         s.alone_since = s.alone_wait = None
-        self._watch_owner(s, ids, now)
         lone = ids[0] if len(ids) == 1 else None
-        if lone and s.peak >= 2 and str(lone) not in self.memory.people and not self._is_owner(lone) and not s.leave_at:
+        if lone and s.peak >= 2 and str(lone) not in self.memory.people and not s.leave_at:
             s.leave_at = now + random.uniform(60, 300)
         if s.leave_at and now >= s.leave_at:
             await self.leave("the people she came for left")
@@ -501,18 +480,8 @@ class Voice(Component):
         if self.app.clock.late and s.minutes > 20 and random.random() < per_tick(0.5, self.tick):
             await self.leave("it's late")
 
-    @staticmethod
-    def _watch_owner(s, ids, now):
-        if not s.owner:
-            return
-        if s.owner in ids:
-            s.owner_seen, s.owner_left = True, None
-        elif s.owner_seen and s.owner_left is None:
-            s.owner_left = now
-            s.leave_at = now + random.uniform(45, 200)
-
     async def _stay_or_go(self, s, ids, guild_id, now):
-        good = any(self._is_owner(u) or self.app.addressing.chatting_with(guild_id, u) for u in ids)
+        good = any(self.app.addressing.chatting_with(guild_id, u) for u in ids)
         if good and s.extended < 2:
             s.extended += 1
             s.stay_until = now + random.uniform(5, 20) * 60

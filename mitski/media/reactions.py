@@ -10,6 +10,7 @@ from mitski.core import logs
 from mitski.core.collections import window_count
 from mitski.core.component import Component
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 from mitski.llm import prompt_format
 from mitski.media.emojis import emoji_lib
 
@@ -86,11 +87,10 @@ class Reactions(Component):
         names = [f":{e.name}:" for e in self.app.emojis.ranked(guild)[:30]]
         her = short_name(self.me)
         prompt = self.llm.fmt.instruct(
-            "You pick emoji reactions for messages in a discord chat.",
-            f'{short_name(msg.author)} sent this in a discord chat:\n"{cut(text, 300)}"\n\n'
-            f"Pick one emoji reaction {her} would add to it."
-            + (f" Server emojis she can use: {' '.join(names)}. She can also use any normal emoji." if names else "")
-            + " If nothing fits, write none. Answer with only the emoji.",
+            wording("media.reaction_system"),
+            say("media.reaction", name=short_name(msg.author), text=cut(text, 300), her=her)
+            + ((" " + say("media.reaction_server_emojis", names=" ".join(names))) if names else "")
+            + (" " + wording("media.reaction_answer")),
         )
         try:
             out = await self.llm.generate(prompt, temperature=0.7, n_predict=12, helper=True)

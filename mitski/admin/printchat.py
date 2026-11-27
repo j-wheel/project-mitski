@@ -1,9 +1,3 @@
-"""A printout of a whole dm, styled like discord's dark theme, as one pdf.
-
-The page is built as html (so it can look like discord) and printed to pdf by a headless chrome or edge. Everything
-from discord is escaped before any formatting is added, so nothing in a message can turn into markup or script.
-"""
-
 import asyncio
 import html
 import os
@@ -92,7 +86,6 @@ def _name(user):
 
 
 def rows_from(messages, tz):
-    """Plain rows from discord messages, oldest first, with each reply pointing at what it replied to."""
     by_id = {m.id: m for m in messages}
     rows = []
     for m in messages:
@@ -190,7 +183,6 @@ def _emoji_img(m, size):
 
 
 def markdown(text, names, images=True):
-    """Discord-style formatting for one message. text is escaped first, then formatting is added on top."""
     jumbo = bool(text) and bool(ONLY_EMOJI.match(text)) and len(text) <= 60
     out = html.escape(text or "")
     keep = []
@@ -321,8 +313,6 @@ def _time_label(when):
 
 
 def build_html(rows, title, subtitle, her_id, avatar="", images=True, names=None):
-    """One discord-looking page for the whole chat. Messages from the same person close together are grouped
-    under one name, like discord does, with a separator for each new day."""
     esc = html.escape
     names = {**(names or {}), **{r.author_id: r.name for r in rows}}
     out = [
@@ -430,7 +420,6 @@ def _embed_html(e, images):
 
 
 async def render_pdf(browser, page_html, workdir):
-    """Prints the page with a headless chrome or edge. Returns the pdf path, or raises RuntimeError."""
     workdir = Path(workdir)
     page = workdir / "chat.html"
     pdf = workdir / "chat.pdf"
@@ -444,7 +433,6 @@ async def render_pdf(browser, page_html, workdir):
 
 
 async def _run_browser(browser, workdir, *args, capture=False):
-    """Runs a headless chrome or edge. Returns its exit code and, with capture, what it printed."""
     proc = await asyncio.create_subprocess_exec(
         browser,
         "--headless=new",
@@ -467,8 +455,6 @@ async def _run_browser(browser, workdir, *args, capture=False):
 
 
 async def render_png(browser, page_html, workdir):
-    """The page as one long png. It's measured first, then shot in slices and stitched together, since one huge
-    screenshot isn't something a browser can be trusted with. The measuring script is ours: messages are escaped."""
     try:
         from PIL import Image
     except ImportError:
@@ -517,8 +503,6 @@ async def render_png(browser, page_html, workdir):
 
 
 async def make(app, channel, workdir, browser, kind="pdf"):
-    """The whole dm as a pdf or one long png. Returns (file, messages, with_pictures). If it's too big to upload even
-    without pictures, with_pictures is None."""
     messages = [m async for m in channel.history(limit=None, oldest_first=True)]
     if not messages:
         raise RuntimeError("there's nothing in that dm")
@@ -548,7 +532,6 @@ async def make(app, channel, workdir, browser, kind="pdf"):
 
 
 def describe(channel, me):
-    """The printout's title and the picture at the top."""
     if isinstance(channel, discord.DMChannel) or getattr(channel, "recipient", None) is not None:
         other = channel.recipient
         return f"{_name(me)} & {_name(other)}", _avatar(other), getattr(other, "name", "")

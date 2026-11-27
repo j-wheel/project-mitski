@@ -1,16 +1,3 @@
-"""Her feelings: how she feels about each person (like, trust, chemistry, hurt) and her own mood.
-
-How much she likes someone changes the way a person's would: slowly, from what they actually do. Her memory-notes
-model reads the chat and says what happened ("they made her laugh", "they called her dumb"), quoting the message;
-the numbers are decided here, with the usual human biases: bad moments weigh more than good ones, the same
-compliment wears off, friends' roasts sting less, sweet talk from someone she doesn't trust counts for less, and
-nobody can flatter or bully their way up or down in a day. Hurt fades over hours, a real apology helps, and people
-she stops talking to slowly drift back to neutral.
-
-Her mood is a handful of emotions that rise with what happens (people, her day, the time) and fade back to a
-baseline at their own pace. Only the strongest one or two ever show, and gently.
-"""
-
 import asyncio
 import datetime as dt
 import random
@@ -21,6 +8,7 @@ from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
 from mitski.core.text import cut, squash
+from mitski.core.texts import fill, say, wording
 from mitski.memory.dates import said_ago
 from mitski.memory.heuristics import find_evidence
 
@@ -31,123 +19,127 @@ DIMS = ("like", "trust", "spark", "hurt")
 BOUNDS = {"like": (-100.0, 100.0), "trust": (0.0, 100.0), "spark": (0.0, 100.0), "hurt": (0.0, 100.0)}
 START = {"like": 0.0, "trust": 15.0, "spark": 0.0, "hurt": 0.0}
 INTENSITY = {1: 1.0, 2: 1.8, 3: 2.6}
-OWNER_FLOOR = {"like": 20.0, "trust": 50.0}
 CLOSE = 35
 FRIENDLY_ENOUGH_TO_DM = 25
 EVENTS_KEPT = 40
 DRIFT_AFTER_DAYS = 30
 SPARK_FADES_AFTER_DAYS = 14
 
+MEANINGS = wording("feelings.kinds")
 # kind -> (what it means, for the notes model; effect on like/trust/spark/hurt; effect on her mood)
 KINDS = {
     "compliment_her": (
-        "said something nice about her (her looks, her taste, something she did)",
+        MEANINGS["compliment_her"],
         {"like": 2, "spark": 0.5, "hurt": -3},
         {"happy": 0.15},
     ),
-    "kindness": ("was genuinely kind or sweet to her", {"like": 2, "trust": 1}, {"happy": 0.12, "content": 0.1}),
+    "kindness": (MEANINGS["kindness"], {"like": 2, "trust": 1}, {"happy": 0.12, "content": 0.1}),
     "cares_about_her": (
-        "checked on her or asked how she's doing and actually cared about the answer",
+        MEANINGS["cares_about_her"],
         {"like": 3, "trust": 2},
         {"affectionate": 0.15, "happy": 0.1},
     ),
     "supported_her": (
-        "had her back, comforted her, or stood up for her",
+        MEANINGS["supported_her"],
         {"like": 4, "trust": 3, "hurt": -5},
         {"affectionate": 0.2, "content": 0.15},
     ),
     "apologized": (
-        "sincerely apologized to her for something",
+        MEANINGS["apologized"],
         {"like": 1, "trust": 1, "hurt": -15},
         {"irritated": -0.15, "sad": -0.1},
     ),
-    "thanked_her": ("thanked her and meant it", {"like": 1}, {"happy": 0.06}),
+    "thanked_her": (MEANINGS["thanked_her"], {"like": 1}, {"happy": 0.06}),
     "shared_interest": (
-        "turned out to like the same things she does (games, music, anime, shows, food, anything)",
+        MEANINGS["shared_interest"],
         {"like": 3, "spark": 0.5},
         {"excited": 0.18, "happy": 0.1},
     ),
     "opened_up": (
-        "shared something personal with her, trusting her with it",
+        MEANINGS["opened_up"],
         {"like": 2, "trust": 3},
         {"affectionate": 0.12},
     ),
-    "made_her_laugh": ("made her laugh for real", {"like": 2, "spark": 0.5}, {"amused": 0.3, "happy": 0.08}),
+    "made_her_laugh": (MEANINGS["made_her_laugh"], {"like": 2, "spark": 0.5}, {"amused": 0.3, "happy": 0.08}),
     "fun_time": (
-        "a fun back and forth, hanging out or playing together",
+        MEANINGS["fun_time"],
         {"like": 2},
         {"happy": 0.12, "content": 0.08},
     ),
     "remembered_her": (
-        "remembered something she told them or something about her life",
+        MEANINGS["remembered_her"],
         {"like": 2, "trust": 1},
         {"happy": 0.12, "affectionate": 0.08},
     ),
-    "kept_promise": ("did what they said they would", {"like": 1, "trust": 3}, {"content": 0.08}),
-    "invited_her": ("invited her to play, hop in vc or hang out", {"like": 2}, {"happy": 0.12, "excited": 0.08}),
+    "kept_promise": (MEANINGS["kept_promise"], {"like": 1, "trust": 3}, {"content": 0.08}),
+    "invited_her": (MEANINGS["invited_her"], {"like": 2}, {"happy": 0.12, "excited": 0.08}),
     "flirted_nicely": (
-        "flirted with her in a way she's into (respectful, playful, and she played along)",
+        MEANINGS["flirted_nicely"],
         {"like": 1, "spark": 3},
         {"flustered": 0.2, "happy": 0.08},
     ),
     "genuine_affection": (
-        "showed real, earned affection (not over the top, not to get something)",
+        MEANINGS["genuine_affection"],
         {"like": 3, "spark": 1, "hurt": -3},
         {"affectionate": 0.2, "happy": 0.1},
     ),
     "friendly_teasing": (
-        "playful banter or a roast both of them clearly enjoyed",
+        MEANINGS["friendly_teasing"],
         {"like": 1},
         {"amused": 0.15},
     ),
     "respectful_disagreement": (
-        "disagreed with her but stayed respectful about it",
+        MEANINGS["respectful_disagreement"],
         {"trust": 1},
         {},
     ),
     "insulted_her": (
-        "called her names or put her down, meaning it (not banter)",
+        MEANINGS["insulted_her"],
         {"like": -4, "trust": -1, "hurt": 15},
         {"irritated": 0.25, "sad": 0.12},
     ),
     "mocked_her": (
-        "made fun of her in a mean way, or embarrassed her in front of others",
+        MEANINGS["mocked_her"],
         {"like": -4, "trust": -2, "hurt": 12},
         {"embarrassed": 0.2, "irritated": 0.2},
     ),
     "rude_to_her": (
-        "was rude, cold or dismissive to her, or told her to shut up and meant it",
+        MEANINGS["rude_to_her"],
         {"like": -2, "hurt": 6},
         {"irritated": 0.15},
     ),
     "fake_affection": (
-        "sweet talk that isn't real: love-bombing, buttering her up to get something, transactional",
+        MEANINGS["fake_affection"],
         {"like": -1, "trust": -4, "spark": -2},
         {"irritated": 0.08},
     ),
     "pushy": (
-        "romantic or sexual pushiness, didn't take no for an answer, or made her uncomfortable",
+        MEANINGS["pushy"],
         {"like": -6, "trust": -5, "spark": -10, "hurt": 10},
         {"irritated": 0.3},
     ),
-    "lied_to_her": ("lied to her and she knows it", {"like": -2, "trust": -6, "hurt": 5}, {"sad": 0.1}),
-    "broke_promise": ("didn't do what they promised her", {"like": -1, "trust": -4, "hurt": 4}, {"sad": 0.08}),
+    "lied_to_her": (MEANINGS["lied_to_her"], {"like": -2, "trust": -6, "hurt": 5}, {"sad": 0.1}),
+    "broke_promise": (MEANINGS["broke_promise"], {"like": -1, "trust": -4, "hurt": 4}, {"sad": 0.08}),
     "trashed_her_likes": (
-        "was a jerk about things she loves (not just a different taste)",
+        MEANINGS["trashed_her_likes"],
         {"like": -1, "hurt": 2},
         {"irritated": 0.08},
     ),
     "mean_to_her_friends": (
-        "went after someone she's close to (only a message marked as said to that friend)",
+        MEANINGS["mean_to_her_friends"],
         {"like": -5, "trust": -2, "hurt": 6},
         {"irritated": 0.2},
     ),
     "trolling_her": (
-        "deliberately tried to provoke her, mess with her or waste her time",
+        MEANINGS["trolling_her"],
         {"like": -2, "trust": -2, "hurt": 4},
         {"irritated": 0.15},
     ),
-    "threatened_her": ("threatened her", {"like": -10, "trust": -10, "hurt": 20}, {"irritated": 0.3, "sad": 0.2}),
+    "threatened_her": (
+        MEANINGS["threatened_her"],
+        {"like": -10, "trust": -10, "hurt": 20},
+        {"irritated": 0.3, "sad": 0.2},
+    ),
 }
 NEGATIVE = {k for k, (_, fx, _) in KINDS.items() if fx.get("like", 0) < 0 or fx.get("hurt", 0) > 0}
 SEEN_FROM_FRIENDS_LIGHTLY = {"insulted_her", "mocked_her", "rude_to_her", "trolling_her"}
@@ -162,41 +154,26 @@ TIERS = (
     (-60, "dislike"),
     (-101, "can't stand"),
 )
-TIER_NOTES = {
-    "adore": "You adore {call}: you're openly warm and affectionate with them, you hype them up, you're protective "
-    "of them and happy whenever they show up.",
-    "really like": "You really like {call}: you're warm and playful with them, you tease them because you're "
-    "comfortable, and you care how they're doing.",
-    "like": "You like {call}: friendly, easy-going and glad to chat.",
-    "neutral": "You don't have strong feelings about {call} either way yet: casual and friendly, but you don't go "
-    "out of your way for them.",
-    "wary": "You're a bit wary of {call}: less warm than usual, shorter replies, a little sarcastic, and no flirting.",
-    "dislike": "You don't like {call}: you're cool and curt with them, sarcastic, you don't do them favours, and you "
-    "call out their nonsense.",
-    "can't stand": "You really can't stand {call}: you're openly cold and dismissive, you'd rather not talk to them, "
-    "and you shut them down if they start something.",
-}
-DECENT = (
-    "Being cold never means slurs, threats or going after their looks, race, gender, sexuality or disabilities, "
-    "and if they're genuinely going through something serious, you drop the attitude and are decent."
-)
+TIER_NOTES = wording("feelings.how_you_treat_them")
+DECENT = wording("feelings.never_cruel")
 
+READS_AS = wording("feelings.emotions")
 # her mood: emotion -> (minutes to fade halfway back to baseline, how it reads)
 EMOTIONS = {
-    "happy": (180, "happy"),
-    "amused": (30, "amused"),
-    "excited": (90, "excited"),
-    "affectionate": (240, "soft and affectionate"),
-    "flustered": (40, "flustered"),
-    "proud": (240, "proud of yourself"),
-    "content": (300, "content and chill"),
-    "sad": (360, "down"),
-    "lonely": (240, "lonely"),
-    "irritated": (120, "irritated"),
-    "stressed": (480, "stressed"),
-    "embarrassed": (45, "embarrassed"),
-    "bored": (90, "bored"),
-    "tired": (300, "tired"),
+    "happy": (180, READS_AS["happy"]),
+    "amused": (30, READS_AS["amused"]),
+    "excited": (90, READS_AS["excited"]),
+    "affectionate": (240, READS_AS["affectionate"]),
+    "flustered": (40, READS_AS["flustered"]),
+    "proud": (240, READS_AS["proud"]),
+    "content": (300, READS_AS["content"]),
+    "sad": (360, READS_AS["sad"]),
+    "lonely": (240, READS_AS["lonely"]),
+    "irritated": (120, READS_AS["irritated"]),
+    "stressed": (480, READS_AS["stressed"]),
+    "embarrassed": (45, READS_AS["embarrassed"]),
+    "bored": (90, READS_AS["bored"]),
+    "tired": (300, READS_AS["tired"]),
 }
 GOOD = {"happy", "amused", "excited", "affectionate", "flustered", "proud", "content"}
 BAD = {"sad", "lonely", "irritated", "stressed", "embarrassed", "bored"}
@@ -243,7 +220,6 @@ def intensity_of(raw):
 
 
 def fresh_regard(d=None):
-    """Someone new is neutral with a little trust. People from before the overhaul start from their old vibe."""
     r = dict(START, hurt_t=0.0, hurt_why="", events=[], day="", day_like=0.0, pending_hurt=0.0)
     if d is not None and "vibe" in d:
         r["like"] = max(-30.0, min(30.0, float(d.pop("vibe") or 0) * 6))
@@ -259,7 +235,6 @@ def hurt_now(r, now, half_life_hours):
 
 
 def drifted(r, last_seen, now):
-    """People she hasn't talked to in a month slowly fade back towards neutral, and chemistry fades sooner."""
     days = max(0.0, now - (last_seen or now)) / DAY
     like, spark = r["like"], r["spark"]
     if days > DRIFT_AFTER_DAYS:
@@ -274,7 +249,6 @@ def recent_count(r, kind, now, hours=24):
 
 
 def effects(kind, intensity, r, now, *, speed=1.0, minor=False, early=False):
-    """What one moment does to how she feels about someone, before it's added on. All the human biases live here."""
     base = KINDS[kind][1]
     scale = INTENSITY[intensity_of(intensity)]
     seen = recent_count(r, kind, now)
@@ -301,7 +275,6 @@ def effects(kind, intensity, r, now, *, speed=1.0, minor=False, early=False):
 
 
 def add(r, dim, delta):
-    """Moving further towards an extreme gets harder, moving back towards neutral doesn't."""
     low, high = BOUNDS[dim]
     value = r[dim]
     if dim == "like" and delta * value > 0:
@@ -311,12 +284,11 @@ def add(r, dim, delta):
 
 
 def mood_word(v):
-    return "really" if v >= 0.6 else "pretty" if v >= 0.38 else "a little"
+    words = wording("feelings.intensity")
+    return words["strong"] if v >= 0.6 else words["clear"] if v >= 0.38 else words["slight"]
 
 
 class Mood:
-    """Her emotions right now. Each one fades back to its baseline (from her day) at its own speed."""
-
     def __init__(self, data=None, baseline=None):
         data = data if isinstance(data, dict) else {}
         self.felt = {k: v for k, v in (data.get("felt") or {}).items() if k in EMOTIONS and isinstance(v, dict)}
@@ -357,19 +329,16 @@ class Mood:
         levels = sorted(((self.level(name, now), name) for name in EMOTIONS), reverse=True)
         return [(name, v) for v, name in levels[:n] if v >= SHOWS_AT]
 
-    def note(self, now=None):
-        top = self.strongest(now)
-        if not top:
-            return ""
+    def words(self, now=None):
         parts = []
-        for name, v in top:
+        for name, v in self.strongest(now):
             why = self.felt.get(name, {}).get("why")
             parts.append(f"{mood_word(v)} {EMOTIONS[name][1]}" + (f" ({why})" if why else ""))
-        return (
-            f"How you feel right now: {' and '.join(parts)}. Let it colour how you talk a little (shorter and flatter "
-            f"when you're down, irritated or tired, more playful and chatty when you're happy), but don't announce "
-            f"it unless someone asks how you are, and don't take it out on people who didn't cause it."
-        )
+        return " and ".join(parts)
+
+    def note(self, now=None):
+        words = self.words(now)
+        return say("feelings.mood", feelings=words) if words else ""
 
 
 class Feelings(Component):
@@ -407,18 +376,13 @@ class Feelings(Component):
         return r
 
     def view(self, d, user_id=None, now=None):
-        """How she feels about someone right now: drift, fading hurt and her owner's floor taken into account."""
         now = now or time.time()
         r = self.regard(d)
         like, spark = drifted(r, d.get("last_seen"), now)
         out = {"like": like, "trust": r["trust"], "spark": spark, "hurt": hurt_now(r, now, self.cfg.GRUDGE_HOURS)}
-        if user_id is not None and self.app.owner.is_owner(user_id):
-            for dim, floor in OWNER_FLOOR.items():
-                out[dim] = max(out[dim], floor)
         return out
 
     def settle(self, d, now=None):
-        """Makes drift and faded hurt permanent, right before someone talks to her again after a while."""
         now = now or time.time()
         r = self.regard(d)
         r["like"], r["spark"] = (round(v, 2) for v in drifted(r, d.get("last_seen"), now))
@@ -438,7 +402,6 @@ class Feelings(Component):
         return (age is not None and age < 18) or (user is not None and self.app.ages.is_minor(user))
 
     def apply(self, user, d, kind, intensity=1, why="", src="notes", now=None):
-        """Adds one moment to how she feels about someone. Returns a line for the log, or "" if nothing moved."""
         if not self.people_on or kind not in KINDS:
             return ""
         now = now or time.time()
@@ -463,9 +426,6 @@ class Feelings(Component):
             moved[dim] = round(add(r, dim, delta), 2)
             if dim == "hurt" and moved[dim] > 0:
                 r["hurt_t"], r["hurt_why"] = now, cut(squash(why) or KINDS[kind][0], 100)
-        if user is not None and self.app.owner.is_owner(user):
-            for dim, floor in OWNER_FLOOR.items():
-                r[dim] = max(r[dim], floor)
         call = self.memory.call_name(d) or d.get("name") or "someone"
         for emotion, amount in KINDS[kind][2].items():
             self.feel(emotion, amount * (1 + max(0.0, r["like"]) / 200 if amount > 0 else 1), f"{call} {why}")
@@ -493,10 +453,6 @@ class Feelings(Component):
         )
 
     def appraise(self, user, d, items, lines):
-        """The memory-notes model's read on how they treated her. Every moment has to quote one of their own
-        messages that was really said TO her ("them" in lines). The only exception is going after someone she's
-        close to, which has to quote a message said to that friend ("them_friend"). Messages to anyone else, or to
-        the room, never count: the code checks who each message was for, it doesn't take the model's word."""
         if not self.people_on or not items:
             return []
         changes, dropped = [], []
@@ -517,9 +473,6 @@ class Feelings(Component):
         return changes
 
     def heard(self, msg, aimed=True):
-        """Someone just said something to her. A quick gut reaction: her mood, and how hurt she is, nothing more.
-        The real judgment of how they treated her comes later, from her memory notes. Only a message that was
-        really said TO her (aimed) can sting or flatter her: one she's just chiming in on is about someone else."""
         text = msg.content or ""
         now = time.time()
         self.mood.last_contact = now
@@ -536,21 +489,21 @@ class Feelings(Component):
         playful = bool(BANTER.search(text))
         call = (self.memory.call_name(d) if d else None) or getattr(msg.author, "display_name", "someone")
         if SEVERE.search(text):
-            self._sting(r, 20, f"{call} said something really nasty to you", now)
-            self.feel("irritated", 0.35, f"{call} said something nasty")
-            self.feel("sad", 0.2, f"{call} said something nasty")
+            self._sting(r, 20, say("feelings.why_very_nasty", name=call), now)
+            self.feel("irritated", 0.35, say("feelings.why_nasty", name=call))
+            self.feel("sad", 0.2, say("feelings.why_nasty", name=call))
         elif INSULT.search(text):
             soft = 0.4 if playful or close else 1.0
-            self._sting(r, 10 * soft, f'{call} said "{cut(squash(text), 60)}"', now)
-            self.feel("irritated", 0.25 * soft, f"{call} was rude to you")
+            self._sting(r, 10 * soft, say("feelings.why_said", name=call, message=cut(squash(text), 60)), now)
+            self.feel("irritated", 0.25 * soft, say("feelings.why_rude", name=call))
         elif COMPLIMENT.search(text):
-            self.feel("happy", 0.12, f"{call} was sweet to you")
+            self.feel("happy", 0.12, say("feelings.why_sweet", name=call))
             if r is not None and r["spark"] >= 30 and not self._minor(msg.author, d):
-                self.feel("flustered", 0.12, f"{call} was sweet to you")
+                self.feel("flustered", 0.12, say("feelings.why_sweet", name=call))
             if r is not None and r["hurt"] > 0:
                 r["hurt"] = max(0.0, r["hurt"] - 2)
         if THANKS.search(text):
-            self.feel("happy", 0.05, f"{call} thanked you")
+            self.feel("happy", 0.05, say("feelings.why_thanked", name=call))
         if SORRY.search(text) and r is not None and hurt_now(r, now, self.cfg.GRUDGE_HOURS) > 0:
             r["hurt"], r["hurt_t"] = round(hurt_now(r, now, self.cfg.GRUDGE_HOURS) * 0.7, 2), now
             self.feel("irritated", -0.1)
@@ -563,7 +516,6 @@ class Feelings(Component):
         r["pending_hurt"] = round(r.get("pending_hurt", 0.0) + amount, 2)
 
     def regard_note(self, user, d, call):
-        """What she's told about how she feels about the person she's talking to."""
         if not self.people_on or d is None:
             return ""
         now = time.time()
@@ -571,42 +523,41 @@ class Feelings(Component):
         r = self.regard(d)
         minor = self._minor(user, d)
         level = tier(v["like"])
-        out = [TIER_NOTES[level].format(call=call)]
+        out = [fill(TIER_NOTES[level], call=call)]
         if v["trust"] >= 70:
-            out.append("You trust them a lot, you can be open and real with them.")
+            out.append(wording("feelings.trust_a_lot"))
         elif v["trust"] < 20 and v["like"] >= 12:
-            out.append("You don't fully trust them yet, so you keep the personal stuff to yourself.")
+            out.append(wording("feelings.trust_not_yet"))
         if minor:
-            out.append("They're a minor: no flirting or anything romantic, ever.")
+            out.append(wording("feelings.minor"))
         elif v["like"] >= 12 and v["spark"] >= 60:
-            out.append("There's real chemistry: you get flirty and a little flustered around them.")
+            out.append(wording("feelings.real_chemistry"))
         elif v["like"] >= 12 and v["spark"] >= 30:
-            out.append("There's a bit of chemistry, so you flirt back when they flirt.")
+            out.append(wording("feelings.some_chemistry"))
         if v["hurt"] >= 8:
             how = (
-                "really hurt and upset with them"
+                wording("feelings.hurt_very")
                 if v["hurt"] >= 50
-                else "still upset with them"
+                else wording("feelings.hurt_still")
                 if v["hurt"] >= 25
-                else "still a little annoyed with them"
+                else wording("feelings.hurt_little")
             )
-            why = r.get("hurt_why") or "something they did"
-            out.append(
-                f"You're {how} ({why}, {said_ago(r.get('hurt_t', now), now)}): you're cooler with them until they "
-                f"make it right, and if they apologize and mean it, you soften."
-            )
+            why = r.get("hurt_why") or wording("feelings.hurt_why_unknown")
+            out.append(say("feelings.hurt", how=how, why=why, when=said_ago(r.get("hurt_t", now), now)))
         lately = [
             e for e in r.get("events", [])[-6:] if now - e["t"] < 14 * DAY and e.get("why") and e.get("src") != "hand"
         ][-2:]
         if lately:
-            out.append("Lately: " + "; ".join(f"they {e['why'].rstrip('.')}" for e in lately) + ".")
+            out.append(
+                (wording("feelings.lately") + " ")
+                + "; ".join(say("feelings.lately_they", what=e["why"].rstrip(".")) for e in lately)
+                + "."
+            )
         if level in ("wary", "dislike", "can't stand") or v["hurt"] >= 25:
             out.append(DECENT)
         return " ".join(out)
 
     def stands_out(self, d, user_id=None):
-        """Worth mentioning even about someone she's only just met: they already hurt her, or she already likes or
-        dislikes them."""
         if not self.people_on or d is None:
             return False
         v = self.view(d, user_id)
@@ -616,14 +567,19 @@ class Feelings(Component):
         if not self.people_on or d is None:
             return ""
         v = self.view(d, user_id)
-        trust = "a lot" if v["trust"] >= 70 else "somewhat" if v["trust"] >= 35 else "not much yet"
-        return f"you {tier(v['like']).replace('neutral', 'feel neutral about')} them and trust them {trust}"
+        trust = (
+            wording("feelings.trust_words_a_lot")
+            if v["trust"] >= 70
+            else wording("feelings.trust_words_somewhat")
+            if v["trust"] >= 35
+            else wording("feelings.trust_words_not_much")
+        )
+        return say("feelings.summary", feeling=tier(v["like"]).replace("neutral", "feel neutral about"), trust=trust)
 
     # ---- what her feelings change about what she does ----
 
     def leaves_on_read(self, user, reply_type=""):
-        """People she really doesn't like sometimes get left on read for small talk."""
-        if not self.people_on or self.app.owner.is_owner(user) or reply_type in ("comfort", "help"):
+        if not self.people_on or reply_type in ("comfort", "help"):
             return False
         like = self.like_of(user)
         if like > -30:
@@ -637,7 +593,7 @@ class Feelings(Component):
         return 1.4 if like >= CLOSE else 1.15 if like >= 12 else 0.3 if like <= -25 else 1.0
 
     def close_enough_to_dm(self, user):
-        return not self.people_on or self.app.owner.is_owner(user) or self.like_of(user) >= FRIENDLY_ENOUGH_TO_DM
+        return not self.people_on or self.like_of(user) >= FRIENDLY_ENOUGH_TO_DM
 
     # ---- her mood ----
 
@@ -648,6 +604,9 @@ class Feelings(Component):
 
     def mood_note(self):
         return self.mood.note() if self.mood_on else ""
+
+    def mood_words(self):
+        return self.mood.words() if self.mood_on else ""
 
     def _baseline(self, name, now):
         if not self.mood_on:
@@ -678,8 +637,8 @@ class Feelings(Component):
         routine = getattr(self.app, "routine", None)
         awake_and_free = routine is None or routine.free
         if awake_and_free and self.mood.last_contact and now - self.mood.last_contact > LONELY_AFTER_SEC:
-            self.mood.feel("lonely", 0.04, "nobody's talked to you in a while", now)
-            self.mood.feel("bored", 0.03, "it's quiet", now)
+            self.mood.feel("lonely", 0.04, wording("feelings.why_lonely"), now)
+            self.mood.feel("bored", 0.03, wording("feelings.why_bored"), now)
             self.dirty = True
 
     def report(self):

@@ -1,5 +1,3 @@
-"""Her discord custom status: the line and emoji under her name, rewritten by her own model every so often."""
-
 import asyncio
 import random
 import re
@@ -11,6 +9,7 @@ from mitski.chat.policy import SAFE_REMINDER, explicit, tame, tone_problem
 from mitski.core import logs
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
+from mitski.core.texts import say, wording
 from mitski.llm.helper import parse_json
 
 log = logs.get("status")
@@ -19,28 +18,14 @@ STATUS_MAX = 128
 START_DELAY = (60, 180)
 RETRY_SEC = 600
 RECENT_KEPT = 12
-ANGLES_KEPT = 4
+ANGLES_KEPT = 10
 TRIES = 3
 TOKENS = 120
 TEMPERATURE = 1.0
 DAY_CHANCE = 0.3
-ANGLES = (
-    "a random thought that just popped into your head",
-    "a hot take about a game, show, food or song you like",
-    "something you're craving right now",
-    "a short dumb joke or pun",
-    "a weird question you'd ask anyone who reads it",
-    "a tiny complaint about uni, the weather or the bus",
-    "a fake motto or a terrible piece of life advice",
-    "a half-joking goal for this week",
-    "something you're looking forward to",
-    "just two or three words, or a kaomoji, that sum up your vibe",
-    "a song you've had stuck in your head, by name and artist",
-    "a game you're grinding or want to play next",
-    "something you noticed today that made you laugh",
-    "a dramatic overreaction to something completely small",
-)
-DAY_ANGLE = "something about your day, said in a fun way, not like a log entry"
+GAME_ANGLES = set(wording("status.game_angles"))
+ANGLES = [*wording("status.angles"), *wording("status.game_angles")]
+DAY_ANGLE = wording("status.day_angle")
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -50,14 +35,8 @@ SCHEMA = {
     "required": ["status", "emoji"],
     "additionalProperties": False,
 }
-INSTRUCTIONS = (
-    "You're changing your discord custom status, the little line people see under your name. It's not a message to "
-    "anyone and not a diary entry: real people put one short, random thing there. Type it the way you type in chat, "
-    f"usually just a few words, never more than {STATUS_MAX} characters, and one simple idea, not two glued "
-    "together. Don't write the time, don't list what you're doing, and don't mention anyone you know by name. Pick "
-    "one normal emoji that goes with it. No @mentions, no links, no hashtags. Answer only with JSON."
-)
-EVERYONE_SEES = f"Your status shows in every server you're in, so it has to be fine for all of them. {SAFE_REMINDER}"
+INSTRUCTIONS = say("status.instructions", max=STATUS_MAX)
+EVERYONE_SEES = say("status.everyone_sees", safe_reminder=SAFE_REMINDER)
 NOT_FOR_A_STATUS = re.compile(r"@|https?://|discord\.gg/", re.I)
 GLUED = re.compile(r"\s[+&|]\s|\s-\s|\s/\s")
 CLOCK = re.compile(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b", re.I)
@@ -68,7 +47,6 @@ EMOJI = re.compile("[\U0001f1e6-\U0001f1ff]{2}|[0-9#*]️?⃣|" + f"{_PIC}{_MOD}
 
 
 def units(text):
-    """Discord counts a status in utf-16 units, so most emojis are two."""
     return len(text.encode("utf-16-le")) // 2
 
 
@@ -81,7 +59,6 @@ def fit(text):
 
 
 def tidy(data):
-    """(text, emoji) from what the model wrote, or None if it isn't usable as a public status."""
     data = data or {}
     found = EMOJI.search(str(data.get("emoji") or ""))
     if found is None:
@@ -99,8 +76,6 @@ def phrases(text, n=3):
 
 
 def stale(text, recent, names=()):
-    """Why this would read badly next to her last statuses, or None: the "x + y rn" shape, a clock time, a phrase
-    she's already used, or someone's name."""
     if GLUED.search(text):
         return "two things glued together"
     if CLOCK.search(text):
@@ -141,7 +116,6 @@ class CustomStatus(Component):
         return discord.CustomActivity(current[0], emoji=current[1]) if current else None
 
     def clear(self):
-        """Gone until her next new one."""
         self.data.update(text="", emoji="")
         self.file.save(self.data)
 
@@ -156,8 +130,6 @@ class CustomStatus(Component):
             await asyncio.sleep(self.every if await self.refresh() else RETRY_SEC)
 
     async def refresh(self):
-        """Her model writes a new status and it goes up, a few tries with a different idea each time. False if none
-        worked, and the old one stays."""
         recent = list(self.data.get("recent") or [])
         angles = list(self.data.get("angles") or [])
         names = self._names()
@@ -195,15 +167,10 @@ class CustomStatus(Component):
         return True
 
     def _names(self):
-        """Everyone she knows by name, so none of them end up in her status."""
         names = set(self.messages.speaker_names())
-        owner = getattr(self.app.owner, "name", "") or ""
-        if owner:
-            names.add(owner.lower())
         return {n for n in names if len(n) >= 3 and " " not in n}
 
     def _angle(self, avoid):
-        """What kind of status this time, never one of the last few. Now and then it's about her day."""
         spell = self.app.routine.spell()
         if spell is not None and DAY_ANGLE not in avoid and random.random() < DAY_CHANCE:
             return DAY_ANGLE
@@ -214,10 +181,17 @@ class CustomStatus(Component):
         spell = self.app.routine.spell()
         background = [f"it's {self.app.clock.now():%A}"]
         if angle == DAY_ANGLE and spell is not None:
-            background.append(f"you're {spell.what}")
+            background.append(say("status.background_doing", doing=spell.what))
+        if angle in GAME_ANGLES:
+            playing = self.app.routine.game_now()
+            if playing:
+                background.append(say("status.background_playing", game=playing))
+            elif self.cfg.ROUTINE_GAMES:
+                some = random.sample(list(self.cfg.ROUTINE_GAMES), min(4, len(self.cfg.ROUTINE_GAMES)))
+                background.append((wording("status.background_games") + " ") + ", ".join(some))
         about = [
-            f"This time, make it {angle}.",
-            f"Only for context, don't write it in: {', '.join(background)}.",
-            'Write it as {"status": "...", "emoji": "..."}.',
+            say("status.make_it", angle=angle),
+            say("status.only_context", background=", ".join(background)),
+            wording("status.answer_as"),
         ]
         return self.llm.fmt.instruct(f"{persona}\n\n{INSTRUCTIONS}", "\n".join(about))

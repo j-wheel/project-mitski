@@ -14,11 +14,15 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 CONFIG_DIR = os.path.join(SCRIPT_DIR, "config")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.yaml")
+sys.path.insert(0, PROJECT_DIR)
+from mitski.paths import Paths  # noqa: E402
+
+PATHS = Paths.discover()
 
 EMPTY_CFG = """TOKEN: "your-bot-token-here" # your bot token
 TARGET_ID: 123456 # user id to index
 GUILD_ID: 0 # only index this server, 0 for every server the bot is in
-OUTPUT: "data/messages.jsonl" # output file, relative to the project folder
+OUTPUT: "" # output file, relative to the project folder. empty: messages.jsonl in the data folder from config/paths.yaml
 KEEP_URLS: false # keep links inside messages
 CONTEXT_MSGS: 6 # previous messages saved as context, 0 to skip (1 extra request per message)
 CONTEXT_MAX_MIN: 60 # ignore context older than this many minutes
@@ -60,7 +64,12 @@ KEEP_URLS = bool(config.get("KEEP_URLS", False))
 CONTEXT_MSGS = int(config.get("CONTEXT_MSGS", 6))
 CONTEXT_MAX_AGE = timedelta(minutes=int(config.get("CONTEXT_MAX_MIN", 60)))
 REQUEST_DELAY = float(config.get("REQUEST_DELAY", 0.5))
-OUTPUT_PATH = os.path.join(PROJECT_DIR, config.get("OUTPUT", "data/messages.jsonl"))
+_output = str(config.get("OUTPUT") or "").strip()
+OUTPUT_PATH = (
+    os.path.join(PROJECT_DIR, _output)
+    if _output and _output != "data/messages.jsonl"
+    else str(PATHS.data_file("messages.jsonl"))
+)
 PROGRESS_PATH = os.path.join(os.path.dirname(OUTPUT_PATH), "progress.json")
 os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 

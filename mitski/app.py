@@ -44,11 +44,13 @@ from mitski.reminders.store import Reminders
 from mitski.report import startup_report
 from mitski.social.ages import AgeGuard
 from mitski.social.away import Away
+from mitski.social.blocking import Blocking
 from mitski.social.dms import DirectMessages
 from mitski.social.feelings import Feelings
-from mitski.social.owner import Owner, OwnerRequests
+from mitski.social.owner import Owner
 from mitski.social.presence import Profiles
 from mitski.social.privacy import PrivacyCommands
+from mitski.social.reacted import ReactionsSeen
 from mitski.social.routine import Routine
 from mitski.social.sleep import SleepCycle
 from mitski.social.status import CustomStatus
@@ -127,8 +129,9 @@ class App:
         self.voice = Voice(self)
 
         self.profiles = Profiles(self)
+        self.reacted = ReactionsSeen(self)
+        self.blocking = Blocking(self)
         self.dms = DirectMessages(self)
-        self.requests = OwnerRequests(self)
         self.scheduler = ReminderScheduler(self)
         self.sleep = SleepCycle(self)
         self.routine = Routine(self)
@@ -201,11 +204,17 @@ class App:
 
         @client.event
         async def on_relationship_add(relationship):
+            self.blocking.relationship(relationship)
             self.dms.friend_request(relationship)
 
         @client.event
         async def on_relationship_update(before, after):
+            self.blocking.relationship(after)
             self.dms.friend_request(after)
+
+        @client.event
+        async def on_relationship_remove(relationship):
+            self.blocking.unblocked(relationship)
 
         @client.event
         async def on_presence_update(before, after):
@@ -216,6 +225,10 @@ class App:
         async def on_raw_reaction_add(payload):
             self.router.reaction(payload)
 
+        @client.event
+        async def on_raw_reaction_remove(payload):
+            self.reacted.removed(payload)
+
     async def ready(self):
         if self.user.id in self.cfg.ignored:
             self.cfg.ignored.discard(self.user.id)
@@ -225,6 +238,7 @@ class App:
         if not self.started:
             self.started = True
             await self._start()
+        self.blocking.sync()
         self.dms.accept_pending()
         if not self.cfg.PROFILES:
             for guild in self.guilds:
@@ -246,6 +260,8 @@ class App:
         await self.llm.probe()
         await self.vision.check()
         self.voice.check()
+        if self.voice.active:
+            await self.voice.talk.check()
         for name, loop in (
             ("saver", self._save_loop()),
             ("janitor", self._sweep_loop()),

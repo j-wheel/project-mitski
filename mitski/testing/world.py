@@ -16,7 +16,7 @@ QUIET_WORLD = {
     "THINKING": False,
     "SEARCH_PROVIDER": "",
     "VISION": False,
-    "VOICE": False,
+    "VOICE_MODE": "off",
     "YOUTUBE": False,
     "REACTIONS": False,
     "MEMORY": False,

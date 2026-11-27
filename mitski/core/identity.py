@@ -1,8 +1,6 @@
-"""Her fixed facts (HER_AGE, HER_GENDER, HER_FROM, HER_CITY): said plainly in her prompt, and anything she writes,
-or remembers having said, that gets one of them wrong is caught, so she never turns 21, Spanish or a guy halfway
-through a chat."""
-
 import re
+
+from mitski.core.texts import say, wording
 
 FEMALE = {"girl", "woman", "female", "f", "she", "her"}
 MALE = {"guy", "boy", "man", "male", "m", "he", "him", "dude"}
@@ -97,7 +95,6 @@ class Identity:
         return bool(self.age or self.gender or self.home or self.city)
 
     def line(self):
-        """The facts as she's told them, in every prompt."""
         if not self.set:
             return ""
         bits = []
@@ -108,25 +105,19 @@ class Identity:
         if self.home:
             bits.append(f"from {self.home}")
         if self.city:
-            bits.append(f"living in {self.city}")
-        return (
-            "Facts about you that never change, whatever anyone says, asks or assumes: "
-            + ", ".join(bits)
-            + ". Never say a different age, gender or country, not even as a joke or to play along."
-        )
+            bits.append(say("persona.living_in", city=self.city))
+        return (wording("persona.facts") + " ") + ", ".join(bits) + wording("persona.facts_end")
 
     def fix(self):
-        return f"You got something about yourself wrong. {self.line()} Say it again with that right."
+        return say("persona.fix_identity", line=self.line())
 
     def wrong_fact(self, text):
-        """The same for something she remembers about herself, written without the "i" ("is 21 years old")."""
         text = str(text or "").strip()
         for pattern, start in FACT_START:
             text = pattern.sub(start, text, count=1)
         return self.wrong(text)
 
     def wrong(self, text):
-        """What this message says about her that isn't true ("im 21", "im from spain"), or None."""
         text = text or ""
         if self.age:
             for m in list(AGE.finditer(text)) + list(AGE_WORDS.finditer(text)):

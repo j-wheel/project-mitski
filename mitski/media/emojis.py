@@ -6,6 +6,7 @@ import time
 from mitski.chat.patterns import CUSTOM_EMOJI
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
+from mitski.core.texts import wording
 
 try:
     import emoji as emoji_lib
@@ -184,10 +185,8 @@ class Emojis(Component):
         rng = random.Random(seed)
         top += rng.sample(rest, min(5, len(rest)))
         if self.external_ok(guild, "emojis"):
-            return "Custom emojis you can use (you have nitro, so emojis from any server work): " + " ".join(
-                f":{e.name}:" for e in top
-            )
-        return "Custom emojis on this server you can use: " + " ".join(f":{e.name}:" for e in top)
+            return (wording("media.emojis_nitro") + " ") + " ".join(f":{e.name}:" for e in top)
+        return (wording("media.emojis_server") + " ") + " ".join(f":{e.name}:" for e in top)
 
     def find_sticker(self, guild, name):
         name = re.sub(r"\s*\(.*$", "", name).strip().lower()

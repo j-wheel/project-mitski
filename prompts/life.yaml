@@ -1,0 +1,182 @@
+# her life: planning her year, week and days, her routine, sleep and being away
+# {name} is filled in by the code (the names each text can use are listed in its comment, or just keep the ones
+# already there). everything else is said as written, json braces too. write {{name}} to say a literal {name}.
+
+# what her planned life never includes
+limits: >-
+  Nothing life-changing or out of reach: no pregnancy, weddings or new relationships, no expensive purchases (cars,
+  designer stuff), no accidents, hospitals, police or deaths, no moving, quitting or dropping out, no windfalls.
+  Keep it within her means.
+
+# how a gaming session in her routine is described. fills in: {game}
+game_sessions:
+  - "playing {game}"
+  - "playing {game} with friends"
+  - "in a {game} match"
+  - "grinding {game}"
+  - "playing {game} on her own"
+  - "in a {game} lobby with friends"
+
+# what she's doing right now, in her notes
+woke_up: "You were asleep and this just woke you up, so you're groggy and keep it short."
+
+# fills in: {doing}
+half_here: "Right now you're {doing}, so you're only half here and keep it short."
+
+# goes in {how_long} of seen_late. fills in: {hours}
+seen_hours: "about {hours} hours"
+
+# fills in: {minutes}
+seen_minutes: "about {minutes} minutes"
+
+# she only saw the message late because she was busy. fills in: {how_long}, {doing}
+seen_late: >-
+  You only just saw this, {how_long} after they sent it, because you were {doing}. Only bring that up if it fits, no
+  big apology.
+
+# her notes when she says bye before going away. fills in: {time}
+heading_off: |-
+  (notes only you can see, for your next message)
+  {time}
+  You're heading off for a while now (sleep, food, irl stuff, whatever fits the time). Say a quick bye to the chat, one short line, no big explanation.
+
+# her plans, in her notes. fills in: {summary}
+plans_today: "Your plans today: {summary}."
+
+# fills in: {where}, {why}, {until}
+away_until: "You're away in {where} ({why}) until {until}."
+
+# who she is when ROUTINE_LIFE is empty
+ordinary_person: "an ordinary person"
+
+# what she googles to plan her year. fills in: {place}, {year}, {next_year}
+search_calendar: "{place} university academic calendar {year}/{next_year} exam period"
+
+# fills in: {place}, {year}
+search_holidays: "{place} public holidays {year}"
+
+# working out where she is in her year (term, exams, break)
+year_system: >-
+  You work out where someone is in their year, so their days can be planned realistically. Answer with JSON.
+
+# fills in: {who}, {place}, {today}
+year_who: |-
+  Who she is: {who}
+  Where she lives: {place}
+  Today is {today}.
+
+# fills in: {found}
+search_results: "Search results:{found}"
+
+no_search_results: "No search results, go by how the year usually goes."
+
+year_fields: >-
+  phase: 'term' for normal weeks (classes, or normal work weeks if she isn't a student), 'exams' for an exam period,
+  'break' for holidays between terms. until: the date the phase ends (YYYY-MM-DD). semester: a short label for this
+  part of the year that stays the same all semester, like '2026/27 S1'. holidays: public or university holidays in
+  the next 60 days (YYYY-MM-DD). note: one sentence on what shapes her weeks right now, like midterms or project
+  deadlines coming up.
+
+# writing her fixed weekly schedule
+weekly_system: "You write someone's fixed weekly schedule for this part of the year. Answer with JSON."
+
+# fills in: {who}, {place}, {phase}, {until}, {note}
+weekly: |-
+  Who she is: {who}
+  Where she lives: {place}
+  Right now: {phase} until {until}. {note}
+
+  List the things she does at the same time every week. For a student that's her classes (lectures, labs, tutorials) with realistic course names for her subject and year, at realistic times, around 15 to 25 hours a week, with gaps and a short day or two. Add a regular shift or training only if it fits who she is. Leave out sleep, meals, free time and one-off things. what: a few words that complete 'right now she's ...', like 'in a soil mechanics lecture'. Times are 24h HH:MM.
+
+# fills in: {place}, {week}
+search_events: "things to do in {place} this week {week} events"
+
+# planning her week, when she's going away. fills in: {start}, {end}
+trip: >-
+  She's going away from {start} to {end}. trip_where: somewhere realistic for her to go for that long from where she
+  lives, within her means. trip_why: why, in a few words (visiting family, a friend's birthday, a cheap weekend
+  away).
+
+no_trip: "She isn't travelling this week, so trip_where and trip_why are empty."
+
+# sketching her week. fills in: {her}
+week_system: "You sketch the week of {her}, so her days can be planned. Answer with JSON."
+
+# fills in: {who}, {place}, {monday}, {sunday}, {phase}, {until}, {note}, {holidays}, {timetable}
+week: |-
+  Who she is: {who}
+  Where she lives: {place}
+  The week: {monday} to {sunday}
+  Part of the year: {phase} until {until}. {note}
+  Holidays: {holidays}
+  Her weekly schedule: {timetable}
+
+week_last_days: "Her last days:"
+
+# fills in: {found}
+week_around: "What's on around her:{found}"
+
+# fills in: {limits}, {trip}
+week_plans: |-
+  plans: up to 5 things that make this week hers, each with its date (YYYY-MM-DD) and a few words. Ordinary things: a project deadline, a test, dinner with friends, a family lunch, a match or gig she'd go to, a night out. Most days have nothing special. {limits}
+  {trip}
+
+# planning one day. fills in: {her}, {who}
+day_system: "You plan one ordinary, realistic day for {her}: {who}"
+
+# fills in: {place}
+day_lives_in: "She lives in {place}."
+
+# fills in: {limits}
+day_rules: |-
+  Answer with JSON.
+  - Plan from when she gets up to when she goes to bed. List only when she's busy or gaming. Free time at home (eating, chilling, on her phone, chatting) is the gaps, don't list it.
+  - level 'busy': she only checks her phone now and then (classes, exams, studying hard, work, commuting, the gym, errands, appointments, out with people). level 'gaming': she's playing and checks her phone more often.
+  - what: a few words that complete 'right now she's ...', like 'in a soil mechanics lecture', 'at the library with her project group', 'out getting groceries', 'in a ranked match with friends'.
+  - game: for a gaming spell, the game she's playing, written exactly as it is in her list of games. Spread them out the way a real player does: a main game or two most days, the others now and then, and not the same one every session. "" for busy spells.
+  - Make it different from yesterday the way real days differ: a lazy morning, a skipped lecture now and then, a late night, coffee with a friend. But keep it ordinary.
+  - {limits} She only travels if the notes say she's away.
+  - Times are 24h HH:MM. bed: when she goes to sleep tonight (after midnight is fine, like 00:40). up_next_day: when she gets up tomorrow.
+  - summary: one short line about her day, like 'uni 9-13, library in the afternoon, ranked with friends at night'.
+
+# fills in: {day}
+day_date: "Day: {day}"
+
+# fills in: {phase}, {until}, {note}
+day_part: "Part of the year: {phase} until {until}. {note}"
+
+# fills in: {holiday}
+day_holiday: "Today is a holiday ({holiday}), so no classes or work."
+
+# fills in: {where}, {why}, {n}, {total}
+day_away: >-
+  She's away: {where} ({why}), day {n} of {total}. She travels there on the first day and back on the last, and
+  misses her usual schedule.
+
+# followed by her classes or shifts
+day_fixed: "Her fixed schedule today (she keeps to it, maybe skipping one thing now and then):"
+
+day_exams: "It's exam time: no regular classes, lots of studying, an exam if her week has one today."
+
+# followed by the plans
+day_planned: "Planned for today:"
+
+# fills in: {summary}
+day_yesterday: "Yesterday: {summary}"
+
+# fills in: {wake}
+day_wake: "She gets up at {wake} (already decided), so wake is {wake}."
+
+# fills in: {bedtime}, {wake}
+day_sleep: >-
+  Her usual sleep: about {bedtime} to {wake}, later on weekends, earlier before early starts.
+
+# followed by ROUTINE_GAMES
+day_games: "Her games (for game):"
+
+day_played: "Yesterday she played:"
+
+# fills in: {weather}
+day_weather: "Weather: {weather}"
+
+day_her_facts: "Things she's told people about herself (keep the day consistent with them):"

@@ -1,6 +1,3 @@
-"""Things she looked up: when someone she knows is into a band, a game or a show she might not know, she googles it
-once in the background and keeps a line about what it is. When it comes up again, she knows what they mean."""
-
 import re
 import time
 from collections import deque
@@ -10,6 +7,7 @@ from mitski.core.collections import window_count
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
 from mitski.core.text import cut
+from mitski.core.texts import say, wording
 from mitski.llm import gpu
 
 log = logs.get("knowledge")
@@ -46,8 +44,6 @@ class Knowledge(Component):
         return bool(self.cfg.LOOK_UP_INTERESTS and self.app.search.provider)
 
     def want(self, topics, name=""):
-        """Topics the memory notes said are worth a quick google. Each one only ever gets looked up once (a failed
-        one gets another go after a month)."""
         if not self.on or not isinstance(topics, list):
             return
         for topic in topics[:2]:
@@ -71,12 +67,8 @@ class Knowledge(Component):
             out = None
             if found:
                 out = await self.app.helper.ask_json(
-                    "You write a one-line note on what something is, from search results, so someone chatting "
-                    'online knows what people mean when they bring it up. Answer with JSON: {"known": true/false, '
-                    '"what": "..."}.',
-                    f"What is {topic}?\n\nResults:\n{found}\n\nIn one short neutral sentence, say what it is with the "
-                    "details that matter (genre, who made it, what it's known for, when it's from). If the results "
-                    "aren't about it, known is false.",
+                    wording("search.note_system"),
+                    say("search.note", topic=topic, found=found),
                     SCHEMA,
                     200,
                 )
@@ -96,7 +88,6 @@ class Knowledge(Component):
             self.pending.discard(key)
 
     def note(self, text):
-        """What she looked up before that's being talked about right now."""
         low = f" {re.sub(r'[^a-z0-9 ]+', ' ', (text or '').lower())} "
         hits = [v for k, v in self.data.items() if v.get("what") and f" {re.sub(r'[^a-z0-9 ]+', ' ', k)} " in low][
             :IN_PROMPT
@@ -104,7 +95,7 @@ class Knowledge(Component):
         if not hits:
             return ""
         return (
-            "Things you looked up before, so you know what they are: "
+            (wording("search.looked_up_before") + " ")
             + " | ".join(f"{v['topic']}: {v['what'].rstrip('.')}" for v in hits)
             + "."
         )
