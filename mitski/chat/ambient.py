@@ -25,13 +25,17 @@ class Ambient(Component):
         self.state.threshold_base[channel_id] = random.randint(self.cfg.ACTIVE_MIN, self.cfg.ACTIVE_MAX)
 
     def should_join(self, channel_id):
+        if not self.may_join(channel_id):
+            return False
+        factor = self.busy_factor(channel_id)
+        return self.state.msg_count[channel_id] >= round(self.state.threshold_base[channel_id] * factor)
+
+    def may_join(self, channel_id):
         guild = getattr(self.app.get_channel(channel_id), "guild", None)
         if self.app.sleep.state_of(channel_id) or not self.app.routine.free_in(getattr(guild, "id", None)):
             return False
         now = time.monotonic()
         factor = self.busy_factor(channel_id)
-        if self.state.msg_count[channel_id] < round(self.state.threshold_base[channel_id] * factor):
-            return False
         if now - self.state.last_active.get(channel_id, NEVER) < self.cfg.ACTIVE_COOLDOWN * factor:
             return False
         if window_count(self.state.ambient_times[channel_id], 3600, now) >= self.cfg.MAX_AMBIENT_PER_HOUR:

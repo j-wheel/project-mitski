@@ -2,12 +2,17 @@ import json
 import os
 import random
 import re
+import sys
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mitski.brain.answers import STOP
 from mitski.brain.prompts import ANSWER_NOTE
 from mitski.config.schema import OPTIONS
+from mitski.core.clock import time_phrase
+from mitski.core.texts import fill, say, wording
 from mitski.llm.prompt_format import Format
 from mitski.paths import Paths
 
@@ -95,6 +100,8 @@ DROP_WORDS = [
     "retarded",
 ]
 SEED = 3407
+
+NAMELESS_HI = say("chat.just_hi", name="They").replace("They is ", "They are ", 1)
 
 PERSONA_FROM = "config"
 PERSONA = OPTIONS["PERSONA"].default
@@ -346,26 +353,6 @@ def local(ts, tz):
     return t.astimezone(tz)
 
 
-def time_phrase(now):
-    h = now.hour
-    part = (
-        "in the middle of the night"
-        if h < 5
-        else "early in the morning"
-        if h < 8
-        else "in the morning"
-        if h < 11
-        else "around midday"
-        if h < 14
-        else "in the afternoon"
-        if h < 18
-        else "in the evening"
-        if h < 22
-        else "late at night"
-    )
-    return f"It's {now.strftime('%A')} {part} ({now.strftime('%H:%M')})."
-
-
 def name_people(window, rng, real_names):
     if real_names:
         return [[n for n, _ in t.lines] if t.role == "user" else [] for t in window]
@@ -439,14 +426,14 @@ def example(turns, start, end, learn, rng, tz, emojis):
     if rng.random() < SYSTEM_EXTRAS_SHARE:
         extras = []
         if call:
+            met = say("memory.talking_with", name=call)
             extras.append(
                 rng.choice(
                     [
-                        f"You're talking with {call}, you don't really know them yet. You haven't talked before, so there's "
-                        f"nothing you remember with them.",
-                        f"You're talking with {call}, someone you've talked to a few times.",
-                        f"You're talking with {call}, a friend of yours.",
-                        f"You're talking with {call}, one of your close friends.",
+                        say("memory.stranger", name=call),
+                        f"{met}, {wording('memory.rel_few_times')}.",
+                        f"{met}, {wording('memory.rel_friend')}.",
+                        f"{met}, {wording('memory.rel_close_friend')}.",
                     ]
                 )
             )
@@ -457,36 +444,32 @@ def example(turns, start, end, learn, rng, tz, emojis):
             for e in dict.fromkeys(used):
                 if e not in listed:
                     listed.insert(rng.randint(0, len(listed)), e)
-            extras.append("Custom emojis on this server you can use: " + " ".join(f":{e}:" for e in listed))
+            extras.append(wording("media.emojis_server") + " " + " ".join(f":{e}:" for e in listed))
         system = "\n\n".join([PERSONA] + extras)
 
     notes = None
     if rng.random() < NOTES_SHARE:
-        lines = ["(notes only you can see, for your next message)"]
+        lines = [wording("chat.notes_header")]
         if rec.get("timestamp"):
             lines.append(time_phrase(local(rec["timestamp"], tz)))
-        where = f"#{rec.get('channel') or 'general'}" + (f" on {rec['guild']}" if rec.get("guild") else "")
-        others = [s for s in speakers if s != call][:4]
-        lines.append(
-            f"You're chatting in {where}"
-            + (f" with {call}" + (f", {', '.join(others)}" if others else "") if call else "")
-            + "."
+        where = f"#{rec.get('channel') or 'general'}" + (
+            " " + say("chat.on_server", server=rec["guild"]) if rec.get("guild") else ""
         )
+        others = [s for s in speakers if s != call][:4]
+        who = (" " + say("chat.with_name", name=call) + (f", {', '.join(others)}" if others else "")) if call else ""
+        lines.append(say("chat.chatting_in", where=where, who=who))
         said = window[last_user].lines[-1][1]
         reply = last.text
         if JUST_HI.match(said) and GREETS_BACK.search(reply):
-            lines.append(
-                f"{call + ' is' if call else 'They are'} just saying hi, so say hi back (you can ask how they're doing). Don't "
-                f"jump to a random question or a new topic."
-            )
+            lines.append(say("chat.just_hi", name=call) if call else NAMELESS_HI)
         elif len(said) < 25 and "?" not in said and len(reply) < 40:
-            lines.append("It's a short message, so a short reply fits.")
+            lines.append(wording("chat.short_message"))
         brief = brief_of(said, reply)
         if brief and rng.random() < BRIEF_SHARE:
-            lines.append(ANSWER_NOTE.format(brief=brief))
+            lines.append(fill(ANSWER_NOTE, brief=brief))
         if STYLE_NOTE:
             lines.append(STYLE_NOTE)
-        lines.append("Use these notes only where they fit, the way a real person would, and never mention them.")
+        lines.append(wording("chat.notes_footer"))
         notes = "\n".join(lines)
     return {"messages": [{"role": "system", "content": system}] + msgs, "notes": notes, "learn": learn_idx}
 

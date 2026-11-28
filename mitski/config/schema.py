@@ -89,6 +89,46 @@ SECTIONS = (
         ),
     ),
     Section(
+        "her profile: what she knows about her own discord profile, and changing her profile picture to fan art of a "
+        "character (!pfp, !profile)",
+        (
+            Option(
+                "SELF_PROFILE",
+                True,
+                "she knows what her own profile looks like (name, pronouns, bio, what her profile picture shows) and "
+                "rereads it every few hours (data/self_profile.json)",
+            ),
+            Option(
+                "AVATAR_AUTO",
+                False,
+                "she changes her profile picture by herself now and then, to fan art of AVATAR_CHARACTER_NAME",
+            ),
+            Option("AVATAR_CHARACTER_NAME", "", 'the character her profile pictures are of, e.g. "onikata kayoko"'),
+            Option("AVATAR_CHARACTER_SOURCE", "", 'where the character is from, e.g. "blue archive"'),
+            Option(
+                "AVATAR_EVERY_H",
+                [24, 72],
+                "hours between changes: one number for a fixed interval, or [min, max] for a random time in between "
+                "(at least 0.5)",
+            ),
+            Option(
+                "AVATAR_FROM",
+                "search",
+                "where pictures come from. search: an image search through SEARCH_PROVIDER (google needs SEARCH_KEY "
+                "and SEARCH_CX with image search on). danbooru: danbooru's tags (it doesn't allow AI art, so it's the "
+                "surest way to get human-drawn fan art), falls back to search if it has nothing. always safe for work",
+                choices=("search", "danbooru"),
+            ),
+            Option(
+                "AVATAR_CHECK",
+                True,
+                "she looks at each picture first (needs VISION) and skips anything that isn't a drawing, isn't safe "
+                "for work, isn't the character, or looks AI-made. AI-made pictures are also caught by their metadata, "
+                "AI image sites and AI words in their titles",
+            ),
+        ),
+    ),
+    Section(
         "commands: who can run them. in chat they're just people to her, she treats them like anyone else",
         (
             Option(
@@ -324,6 +364,20 @@ SECTIONS = (
     Section(
         "joining in by herself (scales automatically with how busy a channel is)",
         (
+            Option(
+                "INNER_THOUGHTS",
+                True,
+                "she follows along with what's being said (a quick thought every THOUGHT_EVERY messages) and joins in "
+                "when she really has something she wants to say, about the message that made her want to. the limits "
+                "below still apply. false = she joins in after a random ACTIVE_MIN..ACTIVE_MAX messages instead",
+            ),
+            Option("THOUGHT_EVERY", 4, "messages from others in a channel between her thoughts (less often when busy)"),
+            Option(
+                "THOUGHT_MIN_MOTIVATION",
+                4,
+                "how much she has to want to say something (1-5) before she joins in. 3 = chattier, 5 = only when she "
+                "can't not",
+            ),
             Option("ACTIVE_MIN", 10, "in a normal-paced channel she speaks up after ACTIVE_MIN.."),
             Option("ACTIVE_MAX", 30, "..ACTIVE_MAX messages from other people"),
             Option("ACTIVE_COOLDOWN", 120, "base seconds between joining in by herself"),
@@ -344,7 +398,12 @@ SECTIONS = (
     Section(
         "context",
         (
-            Option("CONTEXT_MSGS", 30, "max messages she reads when someone talks to her (pings, replies, dms)"),
+            Option(
+                "CONTEXT_MSGS",
+                30,
+                "messages she reads when someone talks to her (pings, replies, dms). the window keeps its first "
+                "message for up to 10 more, so llama-server can reuse its cached prompt, then jumps forward",
+            ),
             Option("AMBIENT_MSGS", 15, "messages she reads when joining in on the general chat"),
             Option("CHAIN_DEPTH", 6, "how far back she follows a chain of replies"),
             Option("CONTEXT_GAP_MIN", 30, "ignore messages from before a silence longer than this"),
@@ -461,6 +520,17 @@ SECTIONS = (
                 "memory work waits until she's had nothing more important to do for this long (max 3 min)",
             ),
             Option(
+                "DOWNTIME",
+                True,
+                "the heavy memory work (rethinking people, server notes, looking things up) is saved for when she's "
+                "asleep in her routine or nothing has happened for DOWNTIME_IDLE_MIN, so it never slows down her "
+                "replies. false = it runs right away. rethinking someone whose memory is nearly full still runs right away",
+            ),
+            Option("DOWNTIME_IDLE_MIN", 20, "minutes without her model doing anything that count as resting"),
+            Option(
+                "DOWNTIME_MAX_WAIT_H", 12, "hours saved work waits at most, it runs anyway after that (one at a time)"
+            ),
+            Option(
                 "MEMORY_EMBED_URL",
                 "",
                 'optional: an embedding model so she finds memories by meaning ("my dog" -> "has a golden retriever"), not just shared words. a second llama-server with Qwen3-Embedding-0.6B: llama-server -m Qwen3-Embedding-0.6B-Q8_0.gguf --embedding --pooling last -ngl 99 -c 8192 -ub 8192 --port 5112 then "http://127.0.0.1:5112". empty = keywords + tags',
@@ -470,6 +540,21 @@ SECTIONS = (
                 "MEMORY_EMBED_DIMS",
                 512,
                 "qwen3-embedding vectors can be cut down to this (smaller cache, same quality). 0 = keep all",
+            ),
+            Option(
+                "CHAT_HISTORY",
+                True,
+                "she also keeps the actual messages of the chats she's in (data/chatlog.db, never from ignored or "
+                "opted-out people) and searches them when someone brings up something from before, next to her notes. "
+                "her notes can miss things, the messages don't",
+            ),
+            Option("CHAT_HISTORY_DAYS", 180, "how long she keeps those messages, 0 = until there are 300k of them"),
+            Option(
+                "RERANK_URL",
+                "",
+                "optional: a reranker that sorts what she remembers by how well it fits what's being talked about, "
+                "before it goes into her prompt. llama-server -m qwen3-reranker-0.6b-q8_0.gguf --reranking --device none "
+                '--port 5114, then "http://127.0.0.1:5114". empty = off',
             ),
             Option(
                 "SELF_NOTES",
@@ -785,6 +870,14 @@ SECTIONS = (
                 "MEMORY_RETENTION_DAYS",
                 180,
                 "she forgets people she hasn't talked to in this many days, 0 = never",
+            ),
+            Option(
+                "PREFERENCE_LOG",
+                True,
+                "when a draft of hers is turned down (robotic, playing the AI game, doing the work, didn't answer, ...) "
+                "and the redo passes, she keeps both with the chat they were for (data/preferences.jsonl), so "
+                "training/train_qwen.py can teach her lora to write the good one the first time. never with minors or "
+                "opted-out people",
             ),
         ),
     ),

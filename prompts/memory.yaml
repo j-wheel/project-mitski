@@ -530,3 +530,11 @@ notes_example:
       why: "teased you back about being older"
   look_up:
     - "deadlock (game)"
+
+# when the remember tool finds old messages, followed by them. fills in: {name}
+remember_chats: "From your old chats with {name} (the actual messages, \"you\" is you):"
+
+# one bit of an old chat. fills in: {when}, {where}, {lines}
+chat_snippet: "[{when}, {where}] {lines}"
+
+chat_in_dms: "in your dms"

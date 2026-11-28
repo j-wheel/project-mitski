@@ -479,10 +479,80 @@ class AdminCommands(Component):
         return [f"she's free for {minutes} min, whatever her plan says"]
 
     async def _stats(self, call):
-        return [self.app.metrics.report(), self.state.stats(), f"{len(self.app.tasks)} background tasks running"]
+        return [
+            self.app.metrics.report(),
+            self.state.stats(),
+            self.llm.cache_report(),
+            self.app.downtime.report(),
+            f"{len(self.app.tasks)} background tasks running",
+        ]
 
     async def _help(self, call):
         return [help_text(self.cfg.COMMAND_PREFIX)]
+
+    async def _reload(self, call):
+        log.info("reloading (%s)", call.cmd)
+        self.app.reload_soon()
+        return ["reloading, back in a few seconds"]
+
+    async def _profile(self, call):
+        me = self.app.self_profile
+        if call.rest.strip().lower() in ("refresh", "r", "now"):
+            await me.refresh()
+        note = me.note()
+        return me.report() + ([f"-# what she's told: {note}"] if note else ["-# she hasn't read her profile yet"])
+
+    async def _pfp(self, call):
+        me = self.app.self_profile
+        word, _, rest = call.rest.strip().partition(" ")
+        word, rest = word.lower(), rest.strip()
+        if not word:
+            return me.report()
+        if word in ("now", "change", "new", "next"):
+            await self.reply(
+                call.channel, f"looking for a new picture of {me.character[0] or '...'}, give her a minute"
+            )
+            return [await me.change("asked to", forced=True)]
+        if word in ("char", "character"):
+            name, bar, source = rest.partition("|")
+            name, source = name.strip(), source.strip()
+            if not name:
+                return [f"like `{call.cmd} char onikata kayoko | blue archive`"]
+            self.cfg.AVATAR_CHARACTER_NAME = name
+            self.cfg.save_value("AVATAR_CHARACTER_NAME", name)
+            if bar:
+                self.cfg.AVATAR_CHARACTER_SOURCE = source
+                self.cfg.save_value("AVATAR_CHARACTER_SOURCE", source)
+            got_name, got_source = me.character
+            return [f"her profile pictures will be {got_name}" + (f" from {got_source}" if got_source else "")]
+        if word == "every":
+            try:
+                hours = [float(x) for x in rest.replace(",", " ").split()[:2]]
+            except ValueError:
+                hours = []
+            if not hours or min(hours) < 0.5:
+                return [f"like `{call.cmd} every 48` or `{call.cmd} every 24 72` (hours, at least 0.5)"]
+            value = [hours[0], hours[0]] if len(hours) == 1 else sorted(hours)
+            value = [int(h) if h == int(h) else h for h in value]
+            self.cfg.AVATAR_EVERY_H = value
+            self.cfg.save_value("AVATAR_EVERY_H", value)
+            me.schedule()
+            return [
+                f"she'll change it every {value[0]:g}"
+                + (f" to {value[1]:g}" if value[1] != value[0] else "")
+                + " hours"
+            ]
+        if word in ("on", "off"):
+            self.cfg.AVATAR_AUTO = word == "on"
+            self.cfg.save_value("AVATAR_AUTO", word == "on")
+            if word == "on":
+                me.schedule()
+            return [f"changing her profile picture by herself is {word}"]
+        if word == "from" and rest.lower() in ("search", "danbooru"):
+            self.cfg.AVATAR_FROM = rest.lower()
+            self.cfg.save_value("AVATAR_FROM", rest.lower())
+            return [f"her profile pictures come from {rest.lower()} now"]
+        return [f"`{call.cmd} [now | char <name> | <from> | every <h> [max h] | on | off | from search|danbooru]`"]
 
     async def _prefix(self, call):
         new = call.rest.strip()

@@ -5,10 +5,12 @@ from datetime import timedelta
 import discord
 
 from mitski.chat.messages import short_name
+from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.texts import say, wording
 
 HISTORY_FRESH_SEC = 8.0
+STICKY_SLACK = 10
 
 
 @dataclass
@@ -28,6 +30,23 @@ class ContextBuilder(Component):
     def __init__(self, app):
         super().__init__(app)
         self.fetched = {}
+        self.anchors = BoundedDict(500)
+
+    @property
+    def pool(self):
+        return self.cfg.CONTEXT_MSGS + STICKY_SLACK
+
+    def sticky(self, key, msgs):
+        n = self.cfg.CONTEXT_MSGS
+        anchor = self.anchors.get(key)
+        if anchor is not None and any(m.id == anchor for m in msgs):
+            kept = [m for m in msgs if m.id >= anchor]
+            if len(kept) <= n + STICKY_SLACK:
+                return kept
+        kept = list(msgs)[-n:]
+        if kept:
+            self.anchors[key] = kept[0].id
+        return kept
 
     async def recent_history(self, channel, limit):
         now = time.monotonic()
@@ -142,8 +161,9 @@ class ContextBuilder(Component):
             current = parent
         return chain
 
-    async def thread_with(self, channel, trigger, user_id=None):
+    async def thread_with(self, channel, trigger, user_id=None, limit=None):
         user_id = user_id or trigger.author.id
+        limit = limit or self.cfg.CONTEXT_MSGS
         history = [m for m in await self.recent_history(channel, 100) if self.messages.usable(m)]
         self.state.last_history[channel.id] = history
         chain = [m for m in await self.reply_chain(trigger) if self.messages.usable(m)] if trigger else []
@@ -156,22 +176,24 @@ class ContextBuilder(Component):
             if m.id in ids or self.part_of_convo(m, user_id) or (ref_id is not None and ref_id in ids):
                 selected.append(m)
                 ids.add(m.id)
-        selected = self.within_gap(list(reversed(selected)))[: self.cfg.CONTEXT_MSGS]
+        selected = self.within_gap(list(reversed(selected)))[:limit]
         have = {m.id for m in selected}
         selected += [m for m in chain if m.id not in have]
-        return sorted(selected, key=lambda m: m.id, reverse=True)[: self.cfg.CONTEXT_MSGS]
+        return sorted(selected, key=lambda m: m.id, reverse=True)[:limit]
 
-    async def build(self, channel, mode, trigger):
+    async def build(self, channel, mode, trigger, aim=None):
         target = trigger
         around = []
         if mode == "dm":
-            msgs = await self.recent_history(channel, self.cfg.CONTEXT_MSGS)
+            msgs = await self.recent_history(channel, self.pool)
             msgs = list(reversed(self.within_gap([m for m in msgs if self.messages.usable(m)])))
+            msgs = self.sticky(channel.id, msgs)
             names = False
         elif mode == "ambient":
             window = await self.recent_history(channel, self.cfg.AMBIENT_MSGS)
             window = list(reversed(self.within_gap([m for m in window if self.messages.usable(m)])))
-            target = self.app.ambient.pick_target(window) or trigger
+            aimed = next((m for m in window if aim is not None and m.id == aim), None)
+            target = aimed or self.app.ambient.pick_target(window) or trigger
             msgs = [m for m in window if m.id <= target.id]
             around = (
                 [m for m in window if m.id > target.id][-self.cfg.MEANWHILE_MSGS :]
@@ -180,7 +202,7 @@ class ContextBuilder(Component):
             )
             names = self.cfg.GROUP_NAMES
         else:
-            thread = list(reversed(await self.thread_with(channel, trigger)))
+            thread = list(reversed(await self.thread_with(channel, trigger, limit=self.pool)))
             msgs = [m for m in thread if m.id <= trigger.id]
             later = [m for m in thread if m.id > trigger.id]
             cutoff = discord.utils.utcnow() - timedelta(minutes=10)
@@ -189,7 +211,8 @@ class ContextBuilder(Component):
                 have = {m.id for m in msgs}
                 add = [m for m in recent if m.id < trigger.id and m.id not in have][: self.cfg.CHANNEL_CONTEXT_MSGS]
                 if add:
-                    msgs = sorted(msgs + add, key=lambda m: m.id)[-self.cfg.CONTEXT_MSGS :]
+                    msgs = sorted(msgs + add, key=lambda m: m.id)[-self.pool :]
+            msgs = self.sticky((channel.id, trigger.author.id), msgs)
             authors = {m.author.id for m in msgs if m.author.id != self.me.id}
             names = self.cfg.GROUP_NAMES and len(authors) > 1
             if self.cfg.MEANWHILE_MSGS > 0:

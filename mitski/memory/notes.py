@@ -298,7 +298,13 @@ class NotesMixin:
             d["notes_upto"] = max(m.id for m in new)
             d["since_notes"], d["heard"], d["disclosed"], d["notes_at"] = 0, 0, False, time.time()
             if self._should_reflect(d):
-                changes += await self.reflect(d, name)
+                downtime = getattr(self.app, "downtime", None)
+                if self._must_reflect(d) or downtime is None or not downtime.on:
+                    changes += await self.reflect(d, name)
+                else:
+                    downtime.later(
+                        f"reflect-{user.id}", lambda uid=user.id: self.reflect_now(uid), f"rethinking {name}"
+                    )
             self._evict(d, self.facts_max, changes)
             self._evict(self.own, self.self_max, changes, "S")
             self.dirty = True
@@ -477,13 +483,34 @@ class NotesMixin:
             return False
         if len(d["facts"]) + len(d.get("episodes", [])) < 4:
             return False
-        if len(d["facts"]) > self.facts_max * 0.8 or len(d.get("episodes", [])) > self.episodes_max:
+        if self._must_reflect(d):
             return True
         if not d.get("portrait"):
             return d.get("since_reflect", 0) >= 2
         return d.get("since_reflect", 0) >= self.reflect_every or (
             d.get("since_reflect", 0) >= 2 and time.time() - d.get("reflect_at", 0) > 7 * DAY
         )
+
+    def _must_reflect(self, d):
+        return len(d["facts"]) > self.facts_max * 0.8 or len(d.get("episodes", [])) > self.episodes_max
+
+    async def reflect_now(self, uid):
+        d = self.get(uid)
+        if not d or int(uid) in self.running or not self._should_reflect(d):
+            return
+        self.running.add(int(uid))
+        name = d.get("name") or str(uid)
+        try:
+            changes = await self.reflect(d, name)
+            self._evict(d, self.facts_max, changes)
+            self.dirty = True
+            if changes:
+                log.info("%s: %s", name, " | ".join(changes))
+                await self.log(f"**memory · {name}** (rethought while resting)\n" + "\n".join(changes))
+            if self.embed.active:
+                await self.embed.docs([text for _, _, text, _ in self._items(d)])
+        finally:
+            self.running.discard(int(uid))
 
     async def reflect(self, d, name):
         gpu.background()

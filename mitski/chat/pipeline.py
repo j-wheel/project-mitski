@@ -120,6 +120,9 @@ class Reply:
     missed: float = 0.0
     recall: object = None
     ready_for: int | None = None
+    inner: str = ""
+    aim: int | None = None
+    clean_retry: bool = False
     seen_as: object = None
     baited: int = 0
 
@@ -175,8 +178,10 @@ class ReplyPipeline(Component):
             self.app.tasks.spawn(self.respond(channel, "direct", key=key), name=f"requeue-{msg.id}")
         return True
 
-    def join_in(self, channel, msg):
-        self.app.tasks.spawn(self.respond(channel, "ambient", trigger=msg), name=f"ambient-{channel.id}")
+    def join_in(self, channel, msg, inner="", aim=None):
+        self.app.tasks.spawn(
+            self.respond(channel, "ambient", trigger=msg, inner=inner, aim=aim), name=f"ambient-{channel.id}"
+        )
 
     async def _until_she_sees_it(self, mode, key):
         routine = self.app.routine
@@ -200,7 +205,7 @@ class ReplyPipeline(Component):
             await asyncio.sleep(random.uniform(*CATCHING_UP_SEC))
         return waited, what
 
-    async def respond(self, channel, mode, key=None, trigger=None):
+    async def respond(self, channel, mode, key=None, trigger=None, inner="", aim=None):
         if mode == "ambient" and not self.app.routine.free_in(getattr(getattr(channel, "guild", None), "id", None)):
             return
         waited, was_doing = await self._until_she_sees_it(mode, key)
@@ -208,7 +213,17 @@ class ReplyPipeline(Component):
         if mode == "ambient" and lock.locked():
             return
         async with lock:
-            reply = Reply(channel, mode, key, trigger, job=next(self.jobs), waited=waited, was_doing=was_doing)
+            reply = Reply(
+                channel,
+                mode,
+                key,
+                trigger,
+                job=next(self.jobs),
+                waited=waited,
+                was_doing=was_doing,
+                inner=inner,
+                aim=aim,
+            )
             with self.app.metrics.trace(mode) as trace:
                 try:
                     await self._run(reply)
@@ -369,7 +384,7 @@ class ReplyPipeline(Component):
         return True
 
     async def _read(self, reply, quiet=False):
-        reply.ctx = await self.app.context.build(reply.channel, reply.mode, reply.trigger)
+        reply.ctx = await self.app.context.build(reply.channel, reply.mode, reply.trigger, aim=reply.aim)
         if not reply.ctx.turns:
             return reply.stop("nothing to answer")
         addressing = self.app.addressing
@@ -486,6 +501,8 @@ class ReplyPipeline(Component):
             + reply.thought.notes
             + await self.app.scheduler.apply(reply.thought, target, channel)
         )
+        if reply.inner:
+            reply.extras.append(say("chat.inner_thought", thought=reply.inner))
         self._see_through(reply)
         if self._done_with_it(reply):
             log.info("[%s] %s keeps baiting her, she's not answering this one", reply.tag, target.author)
@@ -582,12 +599,17 @@ class ReplyPipeline(Component):
         reply.minors = situation.minors_among(authors)
         reply.adult = self.app.policy.adult_ok(reply.channel, minors=reply.minors)
         reply.persona = situation.persona(
-            target.author, reply.guild, full=mode != "ambient", channel=reply.channel, people=authors
+            target.author, reply.guild, full=mode != "ambient", channel=reply.channel, people=authors, about=False
         )
-        reply.notes = situation.notes(mode, reply.channel, target, ctx.msgs, reply.extras, ctx.around, reply.burst)
+        about = situation.about(target.author, full=mode != "ambient", channel=reply.channel)
+        reply.notes = situation.notes(
+            mode, reply.channel, target, ctx.msgs, reply.extras, ctx.around, reply.burst, about=about
+        )
         if self.cfg.SHOW_NOTES:
             log.info("for %s:\n%s", target.author, reply.notes)
-        out = await self.llm.generate(self.llm.prompt(ctx.turns, reply.persona, reply.notes), raw=True)
+        out = await self.llm.generate(
+            self.llm.prompt(ctx.turns, reply.persona, reply.notes), raw=True, cache_key=reply.channel.id
+        )
         reply.text = out.get("content", "") if isinstance(out, dict) else str(out or "")
         if stopped_at_limit(out, self.cfg.MAX_TOKENS):
             log.info("[%s] her reply ran into MAX_TOKENS, leaving off the unfinished end", reply.tag)
@@ -618,7 +640,10 @@ class ReplyPipeline(Component):
         if problem:
             log.info("[%s] reply looked %r, trying again: %s", reply.tag, problem, " | ".join(reply.lines))
             Metrics.event(f"redo {problem}")
+            first = list(reply.lines)
             reply.lines = await self._retry(reply, self._fix_for(problem, reply), seen)
+            if reply.clean_retry:
+                self.app.preferences.keep(reply, first, reply.lines, problem)
             if not reply.lines:
                 log.info("[%s] still no good reply, staying quiet", reply.tag)
                 if reply.mode != "ambient" and self.cfg.REACTIONS:
@@ -634,6 +659,7 @@ class ReplyPipeline(Component):
         if reply.lines and thought.wants_answer and not answers_it(reply.lines, thought.brief, thought.checked):
             log.info("[%s] reply didn't answer, trying again: %s", reply.tag, " | ".join(reply.lines))
             Metrics.event("answer retry")
+            first = list(reply.lines)
             reply.lines = await self.app.review.make_her_answer(
                 ctx.turns,
                 reply.persona,
@@ -647,15 +673,20 @@ class ReplyPipeline(Component):
                 reply.lines,
                 reply.tag,
             )
+            if reply.lines != first:
+                self.app.preferences.keep(reply, first, reply.lines, "didn't answer", self.app.review.answered_by)
         if reply.lines and await self.app.policy.judged_unsafe(reply.lines, reply.channel):
             log.info("[%s] the safety check turned it down, trying again: %s", reply.tag, " | ".join(reply.lines))
             Metrics.event("redo not safe")
+            first = list(reply.lines)
             reply.lines = await self._retry(reply, FIXES["not safe"], seen)
             if not reply.lines or await self.app.policy.judged_unsafe(reply.lines, reply.channel):
                 log.info("[%s] still not safe, staying quiet", reply.tag)
                 if reply.mode != "ambient" and self.cfg.REACTIONS:
                     await self.app.reactions.react(reply.trigger)
                 return reply.stop("not safe")
+            if reply.clean_retry:
+                self.app.preferences.keep(reply, first, reply.lines, "not safe")
         return bool(reply.lines) or reply.stop("empty draft")
 
     def _joking(self, reply):
@@ -726,8 +757,10 @@ class ReplyPipeline(Component):
         text = await self.llm.generate(
             self.llm.prompt(reply.ctx.turns, reply.persona, reply.notes + "\n" + fix),
             temperature=min(1.3, self.cfg.TEMPERATURE + 0.2),
+            cache_key=reply.channel.id,
         )
         lines = drafts.tidy(text, reply.channel.id, reply.ctx.others)
+        reply.clean_retry = False
         if lines and drafts.problem(
             lines,
             seen,
@@ -764,6 +797,8 @@ class ReplyPipeline(Component):
                 lines = []
             if lines and guard.laughing_at_nothing(lines, reply.said, self._joking(reply)):
                 lines = []
+        elif lines:
+            reply.clean_retry = True
         return lines
 
     async def _aim(self, reply):

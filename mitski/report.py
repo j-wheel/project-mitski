@@ -44,6 +44,7 @@ def startup_report(app):
     if cfg.MEMORY:
         lines.append(
             f"memory: notes {'with qwen thinking' if app.helper.think_on else 'without thinking'} | recall by "
-            f"{memory.embed.status()} | reflect every {memory.reflect_every} new things"
+            f"{memory.embed.status()} | reflect every {memory.reflect_every} new things | rerank "
+            f"{memory.rerank.status()} | chat history {app.chatlog.status()}"
         )
     return lines

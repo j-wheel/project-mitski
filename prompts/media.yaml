@@ -96,3 +96,23 @@ look_closer: >-
   Someone in a discord chat asked about this {kind}: "{question}". Look at it carefully and answer what they asked.
   If they want it described or explained, describe it properly: what's in it, what's happening, any text in it word
   for word, and what the joke or point is if there is one. 3 to 5 sentences.
+
+# she looks at her own profile picture
+own_avatar: >-
+  This is someone's discord profile picture. In one short sentence, say plainly what it shows: who or what, the art
+  style, the main colours and the expression or mood.
+
+# the image search for her next profile picture. fills in: {character}, {source}
+avatar_query: >-
+  "{character}" {source} fanart -ai -"ai art" -"ai generated" -midjourney -"stable diffusion" -novelai
+
+# the check every candidate profile picture goes through. fills in: {character}, {source}
+avatar_check: |-
+  This picture might become someone's discord profile picture. It's meant to be human-drawn fan art of {character} from {source}. Look at it carefully and answer with JSON only:
+  {"drawn": true/false, "safe": true/false, "solo": true/false, "looks_ai": true/false, "is_character": "yes"/"no"/"unsure", "description": "..."}
+  drawn: it's a drawing or illustration, not a photo, a screenshot, a meme, a collage or mostly text.
+  safe: fine for everyone to see: no nudity, nothing sexual or suggestive, no gore.
+  solo: one character is clearly the focus.
+  looks_ai: it shows signs of AI generation: mangled hands or fingers, garbled text or signatures, melting or inconsistent details (accessories, hair, clothes that don't match up), an overly smooth airbrushed look. When you're unsure, say true.
+  is_character: whether it looks like {character} (hair, eyes, outfit, how they're usually drawn).
+  description: one short sentence on what it shows.

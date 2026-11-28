@@ -118,6 +118,7 @@ class Profiles(Component):
         return " ".join(
             line
             for line in (
+                self.app.self_profile.note(),
                 say("chat.own_activity", verb=verb, text=text) if verb and text else "",
                 say("chat.own_custom_status", status=custom[0]) if custom else "",
             )

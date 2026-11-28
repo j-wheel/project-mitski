@@ -257,6 +257,9 @@ class PeopleStore:
             log.info("%s: %s (%s)", self.name_of(user), " | ".join(changes), why)
 
     def forget(self, user_id):
+        chatlog = getattr(self.app, "chatlog", None)
+        if chatlog is not None:
+            chatlog.forget(user_id)
         gone = self.people.pop(str(user_id), None) is not None
         if gone:
             self.dirty = True

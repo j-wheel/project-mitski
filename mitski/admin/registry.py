@@ -121,10 +121,25 @@ GROUPS = (
         (Command("quiet", ("q",), "<min|off> [server]", "completely quiet in a server, or everywhere without one"),),
     ),
     (
+        "her profile",
+        (
+            Command(
+                "profile", ("pr",), "[refresh]", "what she knows about her own discord profile (refresh: look again)"
+            ),
+            Command(
+                "pfp",
+                ("pf", "avatar"),
+                "[now | char <name> | <from> | every <h> [max h] | on | off]",
+                "her profile picture: what it is, change it now, which character, how often, or turn changing it on/off",
+            ),
+        ),
+    ),
+    (
         "bot",
         (
             Command("stats", ("st",), "", "reply latency, llm calls per reply, time per stage, fallbacks"),
             Command("prefix", ("px", "setprefix"), "[new]", "show or change what commands start with"),
+            Command("reload", ("rl", "restart"), "", "restart her: reloads her code, config, prompts and services"),
             Command("help", ("h", "commands"), "", "this list"),
         ),
     ),

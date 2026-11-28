@@ -309,3 +309,8 @@ privacy_remembering: "ok, i'll remember stuff about u again"
 
 # after .rememberme when nothing changed
 privacy_already: "i wasn't forgetting u, nothing changed"
+
+# when an inner thought made her join in. fills in: {thought}
+inner_thought: >-
+  You were reading along and thought: "{thought}" That's why you're joining in. Say it your way, short, if it still
+  fits.

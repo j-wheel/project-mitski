@@ -118,6 +118,79 @@ class WebSearch(Component):
             return [(r.get("title", ""), r.get("snippet", "")) for r in rows[:5]]
         return []
 
+    async def images(self, query, n=40):
+        if not self.provider:
+            log.info("no SEARCH_PROVIDER, can't search for images")
+            return []
+        try:
+            rows = await self._image_rows(query, n)
+        except Exception:
+            log.warning("%s image search for %r failed", self.provider, query, exc_info=True)
+            return []
+        return [r for r in rows if r.get("url")]
+
+    async def _image_rows(self, query, n):
+        if self.provider == "ddg":
+            rows = await asyncio.wait_for(
+                asyncio.to_thread(lambda: DDGS().images(query, safesearch="on", max_results=n)), 30
+            )
+            return [
+                {
+                    "url": r.get("image"),
+                    "page": r.get("url"),
+                    "title": r.get("title", ""),
+                    "width": r.get("width"),
+                    "height": r.get("height"),
+                }
+                for r in rows or []
+            ]
+        if self.provider == "searxng":
+            params = {"q": query, "format": "json", "categories": "images", "safesearch": 2}
+            async with self.app.http.get(f"{self.searxng_url}/search", params=params) as r:
+                r.raise_for_status()
+                rows = (await r.json()).get("results") or []
+            return [{"url": r.get("img_src"), "page": r.get("url"), "title": r.get("title", "")} for r in rows[:n]]
+        if self.provider == "brave":
+            headers = {"X-Subscription-Token": self.cfg.SEARCH_KEY, "Accept": "application/json"}
+            url = "https://api.search.brave.com/res/v1/images/search"
+            params = {"q": query, "count": min(n, 100), "safesearch": "strict"}
+            async with self.app.http.get(url, params=params, headers=headers) as r:
+                r.raise_for_status()
+                rows = (await r.json()).get("results") or []
+            return [
+                {"url": (r.get("properties") or {}).get("url"), "page": r.get("url"), "title": r.get("title", "")}
+                for r in rows
+            ]
+        if self.provider == "google":
+            out = []
+            for start in (1, 11, 21):
+                params = {
+                    "key": self.cfg.SEARCH_KEY,
+                    "cx": self.cfg.SEARCH_CX,
+                    "q": query,
+                    "searchType": "image",
+                    "safe": "active",
+                    "num": 10,
+                    "start": start,
+                }
+                async with self.app.http.get("https://www.googleapis.com/customsearch/v1", params=params) as r:
+                    r.raise_for_status()
+                    rows = (await r.json()).get("items") or []
+                out += [
+                    {
+                        "url": r.get("link"),
+                        "page": (r.get("image") or {}).get("contextLink"),
+                        "title": r.get("title", ""),
+                        "width": (r.get("image") or {}).get("width"),
+                        "height": (r.get("image") or {}).get("height"),
+                    }
+                    for r in rows
+                ]
+                if len(rows) < 10 or len(out) >= n:
+                    break
+            return out
+        return []
+
     async def _ddg(self, query):
         failure = None
         for backend in ({}, {"backend": "auto"}, {"backend": "lite"}, {"backend": "html"}):

@@ -53,7 +53,7 @@ class RecallMixin:
         scored.sort(key=lambda x: -x[0])
         return [(kind, obj) for _, kind, obj in scored[:k]]
 
-    async def search(self, user_or_d, query, k=5):
+    async def search(self, user_or_d, query, k=5, rerank=True):
         d = user_or_d if isinstance(user_or_d, dict) else self.get(getattr(user_or_d, "id", None))
         if not d or not (query or "").strip():
             return []
@@ -67,18 +67,32 @@ class RecallMixin:
                     key=lambda x: -x[0],
                 )
                 best = scored[0][0]
-                keep = [(kind, obj) for sc, kind, obj in scored[:k] if sc >= max(0.35, best - 0.12)]
+                keep = [(kind, obj) for sc, kind, obj in scored[: k + 5] if sc >= max(0.35, best - 0.12)]
                 for hit in self._keyword_hits(d, query, 2):
                     if hit not in keep:
                         keep.append(hit)
-                return keep[:k]
+                return (await self._reranked(query, keep, k) if rerank else keep)[:k]
         return self._keyword_hits(d, query, k)
+
+    async def _reranked(self, query, hits, k):
+        if len(hits) <= 1 or not self.rerank.active:
+            return hits
+        texts = {id(obj): text for _, _, text, obj in self._items_of_hits(hits)}
+        got = await self.rerank.rank(cut(query, 1200), [texts[id(obj)] for _, obj in hits], k)
+        return [hits[i] for i, _ in got] if got else hits
+
+    def _items_of_hits(self, hits):
+        for kind, obj in hits:
+            text = obj.get("text") or obj.get("summary") or ""
+            if kind == "fact" and obj.get("tags"):
+                text += " (" + ", ".join(obj["tags"]) + ")"
+            yield kind, None, text, obj
 
     async def prefetch(self, user, context):
         if not self.enabled or user is None or not self.get(user.id):
             return
         try:
-            hits = await self.search(user, context, 4)
+            hits = await self.search(user, context, 4, rerank=False)
         except Exception:
             log.warning("recall failed", exc_info=True)
             hits = []
@@ -110,14 +124,21 @@ class RecallMixin:
         d = self.get(getattr(user, "id", None))
         call = (self.call_name(d) if d else None) or self.name_of(user)
         hits = await self.search(d, query, 5) if d else []
-        if not hits:
+        chatlog = getattr(self.app, "chatlog", None)
+        chats = []
+        if chatlog is not None and not self.opted_out(user):
+            try:
+                chats = await chatlog.search(user, query)
+            except Exception:
+                log.warning("searching her chat history failed", exc_info=True)
+        if not hits and not chats:
             return say("memory.remember_nothing", query=cut(query, 80), name=call)
         now = time.time()
-        return (
-            (say("memory.remember_found", name=call, query=cut(query, 80)) + " ")
-            + "; ".join(self._line(d, kind, obj, call, now) for kind, obj in hits)
-            + wording("memory.remember_only_this")
-        )
+        body = "; ".join(self._line(d, kind, obj, call, now) for kind, obj in hits)
+        if chats:
+            body = (body + ". " if body else "") + say("memory.remember_chats", name=call) + " " + " | ".join(chats)
+        found = say("memory.remember_found", name=call, query=cut(query, 80))
+        return found + " " + body.rstrip(".") + wording("memory.remember_only_this")
 
     def _last_episodes(self, d, n=2, now=None):
         now = now or time.time()

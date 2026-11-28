@@ -57,7 +57,12 @@ class Knowledge(Component):
                 return
             self.times.append(time.monotonic())
             self.pending.add(key)
-            self.app.tasks.spawn(self.learn(str(topic).strip(), name), name=f"look-up-{key[:20]}")
+            topic = str(topic).strip()
+            self.app.downtime.later(
+                f"look-up-{key[:20]}",
+                lambda t=topic: self.learn(t, name),
+                f"looking up {topic} (for {name or 'someone'})",
+            )
 
     async def learn(self, topic, name=""):
         key = topic_key(topic)

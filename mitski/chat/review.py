@@ -11,6 +11,8 @@ log = logs.get("review")
 
 
 class DraftReview(Component):
+    answered_by = "her"
+
     async def answer_all(self, turns, persona, notes, things, channel, others, seen, first):
         asked = " / ".join(f'"{cut(t.text, 120)}"' for t in things)
         must = say("chat.skipped_questions", asked=asked)
@@ -127,7 +129,9 @@ class DraftReview(Component):
         name = self.messages.call(anchor.author)
         must = say("chat.refocus", name=name, message=cut(self.app.addressing.burst_text(burst), 240))
         text = await self.llm.generate(
-            self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must), temperature=min(self.cfg.TEMPERATURE, 0.7)
+            self.llm.fmt_inline.chat(persona, turns, notes + "\n" + must),
+            temperature=min(self.cfg.TEMPERATURE, 0.7),
+            cache_key=channel.id,
         )
         lines = self.app.drafts.tidy(text, channel.id, others)
         if (
@@ -148,6 +152,7 @@ class DraftReview(Component):
             prompt,
             temperature=min(self.cfg.TEMPERATURE, 0.6),
             lora_scale=self.cfg.LORA_SCALE * self.cfg.ANSWER_RETRY_LORA,
+            cache_key=channel.id,
         )
         retry = self.app.drafts.tidy(text, channel.id, others)
         if (
@@ -158,6 +163,7 @@ class DraftReview(Component):
             log.info(
                 "[%s] answered on the second try (lora at %g)", mode, self.cfg.LORA_SCALE * self.cfg.ANSWER_RETRY_LORA
             )
+            self.answered_by = "her"
             return retry
         Metrics.event("answer rewrite")
         her = short_name(self.me)
@@ -193,6 +199,7 @@ class DraftReview(Component):
             and not self.app.drafts.problem(written, seen, channel=channel)
         ):
             log.info("[%s] answered on the third try (written by the plain model in her style)", mode)
+            self.answered_by = "plain"
             return written
         log.info("[%s] couldn't get an answer out of her, sending her first reply", mode)
         return first

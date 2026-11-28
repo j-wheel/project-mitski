@@ -32,7 +32,9 @@ training/config/
 # her data: memory, mood, routine, caches, exports, training data (and old copies of it)
 /data/
 /data*/
-results*.json
+
+# eval results saved with evals.replay --json (results.json, new.json, old.json, ...)
+/*.json
 
 # media and models
 mp3/
@@ -46,6 +48,7 @@ llama.cpp/
 *.onnx
 *.index
 
-# training output
+# training output, and the bundle uploaded to train on a rented gpu
 out_mitski*/
 unsloth_compiled_cache/
+*.tar.gz

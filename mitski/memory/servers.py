@@ -58,7 +58,10 @@ class ServerNotes(Component):
         if due and time.time() - entry.get("at", 0) >= MIN_GAP_SEC and self.heard[guild.id] >= 20:
             self.heard[guild.id] = 0
             self.running.add(guild.id)
-            self.app.tasks.spawn(self.update(guild, msg.channel), name=f"server-notes-{guild.id}")
+            channel = msg.channel
+            self.app.downtime.later(
+                f"server-notes-{guild.id}", lambda: self.update(guild, channel), f"server notes for {guild.name}"
+            )
 
     def _about(self, guild):
         lines = [f"Server: {guild.name}"]

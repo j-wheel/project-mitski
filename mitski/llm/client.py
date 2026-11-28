@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import aiohttp
@@ -22,6 +23,15 @@ CHARS_PER_TOKEN = 3.0
 CTX_MARGIN = 256
 SMALL_CTX = 12288
 SENTENCE_END = re.compile(r"[.!?…](?=\s|$)")
+
+
+def lora_label(path):
+    name = os.path.basename(path)
+    try:
+        made = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
+    except OSError:
+        return name
+    return f"{name} ({made})"
 
 
 def tokens_guess(text):
@@ -86,6 +96,8 @@ class LlamaClient(Component):
         self.fmt_inline = prompt_format.Format(self.fmt.name, "inline")
         self.info = ServerInfo()
         self.breaker = Breaker(self.cfg.LLM_PAUSE_AFTER, self.cfg.LLM_PAUSE_SEC)
+        self.slot_of = OrderedDict()
+        self.cache_stats = {"calls": 0, "prompt": 0, "cached": 0}
 
     @property
     def qwen(self):
@@ -139,7 +151,50 @@ class LlamaClient(Component):
             "presence_penalty": cfg.PRESENCE_PENALTY,
         }
 
-    def _payload(self, prompt, temperature, n_predict, json_schema, helper, stop, thinking, lora_scale):
+    def slot_for(self, helper, key=None):
+        slots = self.info.slots
+        if slots < 2:
+            return None
+        if helper:
+            return slots - 1
+        chat = slots - 1
+        if chat == 1:
+            return 0
+        key = "-" if key is None else key
+        if key in self.slot_of:
+            self.slot_of.move_to_end(key)
+            return self.slot_of[key]
+        taken = set(self.slot_of.values())
+        free = [s for s in range(chat) if s not in taken]
+        if free:
+            slot = free[0]
+        else:
+            _, slot = self.slot_of.popitem(last=False)
+        self.slot_of[key] = slot
+        return slot
+
+    def cache_report(self):
+        c = self.cache_stats
+        if not c["calls"]:
+            return "prompt cache: no replies yet"
+        share = c["cached"] / max(1, c["prompt"] + c["cached"])
+        return (
+            f"prompt cache: {share:.0%} of her reply prompts came from cache over {c['calls']} replies "
+            f"({c['prompt'] // c['calls']} new tokens per reply on average), {self.info.slots} slot(s)"
+        )
+
+    def _note_cache(self, data, helper):
+        t = data.get("timings") or {} if isinstance(data, dict) else {}
+        new, cached = int(t.get("prompt_n") or 0), int(t.get("cache_n") or 0)
+        if not (new or cached):
+            return
+        if not helper:
+            self.cache_stats["calls"] += 1
+            self.cache_stats["prompt"] += new
+            self.cache_stats["cached"] += cached
+        log.debug("%s prompt: %d new tokens, %d from cache", "helper" if helper else "reply", new, cached)
+
+    def _payload(self, prompt, temperature, n_predict, json_schema, helper, stop, thinking, lora_scale, cache_key=None):
         payload = {
             "prompt": prompt,
             "n_predict": n_predict or self.cfg.MAX_TOKENS,
@@ -153,8 +208,9 @@ class LlamaClient(Component):
         if self.info.lora:
             scale = 0.0 if helper else (self.cfg.LORA_SCALE if lora_scale is None else lora_scale)
             payload["lora"] = [{"id": i, "scale": scale} for i in self.info.lora]
-        if self.info.slots >= 2:
-            payload["id_slot"] = 1 if helper else 0
+        slot = self.slot_for(helper, cache_key)
+        if slot is not None:
+            payload["id_slot"] = slot
         if json_schema is not None:
             payload["json_schema"] = json_schema
         return payload
@@ -170,11 +226,14 @@ class LlamaClient(Component):
         thinking=False,
         raw=False,
         lora_scale=None,
+        cache_key=None,
     ):
         if self.breaker.open:
             Metrics.event("model_paused")
             raise ModelUnavailable(f"llama-server at {self.url} failed {self.breaker.failures} times in a row")
-        payload = self._payload(prompt, temperature, n_predict, json_schema, helper, stop, thinking, lora_scale)
+        payload = self._payload(
+            prompt, temperature, n_predict, json_schema, helper, stop, thinking, lora_scale, cache_key
+        )
         room = self.room(payload["n_predict"])
         if room is not None and tokens_guess(prompt) > room:
             log.warning(
@@ -197,6 +256,7 @@ class LlamaClient(Component):
                 raise ModelUnavailable(f"{type(e).__name__}: {e}" if str(e) else type(e).__name__) from e
         self.breaker.worked()
         took = time.monotonic() - sent
+        self._note_cache(data, helper)
         if took >= SLOW_SEC:
             self._slow(took, data, "think" if thinking else "helper" if helper else "reply")
         Metrics.llm_call("think" if thinking else "helper" if helper else "reply", time.monotonic() - start)
@@ -306,7 +366,7 @@ class LlamaClient(Component):
         )
         self.app.vision.extra = self.vision_extra()
         self.info.checked = True
-        names = ", ".join(os.path.basename(str(a.get("path", "?"))) for a in adapters if isinstance(a, dict))
+        names = ", ".join(lora_label(str(a.get("path", "?"))) for a in adapters if isinstance(a, dict))
         log.info(
             "%s format, %d slot(s)%s | %s",
             self.fmt.name,
@@ -320,7 +380,7 @@ class LlamaClient(Component):
     def vision_extra(self):
         extra = {"lora": [{"id": i, "scale": 0.0} for i in self.info.lora]} if self.info.lora else {}
         if self.info.slots >= 2:
-            extra["id_slot"] = 1
+            extra["id_slot"] = self.slot_for(helper=True)
         if self.qwen:
             extra["chat_template_kwargs"] = {"enable_thinking": False}
         return extra

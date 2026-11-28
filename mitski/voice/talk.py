@@ -285,9 +285,12 @@ class VoiceTalk(Component):
         others = self.others()
         people = [p for p in (self._person(u) for u in others if u != user.id) if p is not None]
         persona = self.app.situation.persona(
-            user, getattr(self.channel, "guild", None), channel=self.channel, people=people
+            user, getattr(self.channel, "guild", None), channel=self.channel, people=people, about=False
         )
         notes = [fill(VOICE_NOTE, when=time_phrase(self.app.clock.now()), who=", ".join(names) or "them")]
+        about = self.app.situation.about(user, channel=self.channel)
+        if about:
+            notes.append(about)
         seen = guard.read([last_line], self.messages.call(user), [], self.messages.own_names())
         notes += seen.notes
         mood = self.app.feelings.mood_note()
@@ -298,7 +301,9 @@ class VoiceTalk(Component):
         note = "\n".join(notes)
         drafts = self.app.drafts
         for _ in range(2):
-            out = await self.llm.generate(self.llm.prompt(turns, persona, note))
+            out = await self.llm.generate(
+                self.llm.prompt(turns, persona, note), cache_key=getattr(self.channel, "id", None)
+            )
             lines = drafts.tidy(out, getattr(self.channel, "id", 0), names)
             problem = drafts.problem(lines, [], channel=self.channel, said=last_line, work=seen.work)
             if not problem:

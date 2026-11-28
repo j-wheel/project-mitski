@@ -15,7 +15,13 @@ a throwaway account and don't be surprised if it gets banned.
 ## Features
 
 - Answers when she's pinged, replied to or named, and keeps talking with people for a bit after that
-- Joins in on conversations by herself, less often in busy channels
+- Joins in on conversations by herself when she has something to say (`INNER_THOUGHTS`, after "Proactive
+  Conversational Agents with Inner Thoughts", Liu et al. 2025). Every few messages (`THOUGHT_EVERY`, less often when
+  it's busy) she has a quick thought about what's being said and rates how much she wants to say it, 1 to 5. At
+  `THOUGHT_MIN_MOTIVATION` or more she joins in, answering the message that made her want to, with that thought in
+  her notes. A thought that wasn't quite worth saying is kept, so she can bring it up when it becomes relevant. The
+  cooldown, hourly limit, busy-channel and routine checks still apply. Off, she joins in after a random number of
+  messages like before (`ACTIVE_MIN`, `ACTIVE_MAX`), less often in busy channels
 - Works out who a message is for and replies, pings or just sends a message so it's clear who she's talking to
 - Answers several messages from one person together: each question when they ask a few different things, and one
   reaction to the whole thing when it's a few remarks in a row, without repeating their words back
@@ -40,11 +46,23 @@ a throwaway account and don't be surprised if it gets banned.
 - Remembers people between conversations (facts, nicknames, what they play and listen to, past chats), and reads the
   discord profile of people she talks to once a day (bio, pronouns, connected accounts, `PROFILE_READ`) so she has a
   picture of who they are even before they've told her much
+- Also keeps the actual messages of the chats she's in (`CHAT_HISTORY`, `data/chatlog.db`) and searches them, by
+  meaning and by words, when someone brings up something from before. Her notes are a summary and can miss things;
+  the messages can't. What she finds comes with the few messages around it and when and where it was said. Messages
+  from the last 20 minutes are left out, since she can already see those. Nothing from ignored or opted-out people
+  is kept, `!forgetme` deletes theirs, and they're dropped after `CHAT_HISTORY_DAYS`. With `RERANK_URL` a reranker
+  orders what she found by how well it fits
 - Remembers servers too (`SERVER_NOTES`): every so often she takes stock of a server's channels and what's being said,
   and keeps a short list of what it's about, what people there are into, running jokes and events
   (`data/servers.json`)
 - Googles what people are into when she doesn't know it (a band, a game, a show), once, in the background, and
   remembers what it is, so next time it comes up she knows what they mean (`LOOK_UP_INTERESTS`, `data/knowledge.json`)
+- Does her heavy memory work while she rests (`DOWNTIME`). Rethinking someone (their portrait, inside jokes, merging
+  and dropping old facts), server notes and look-ups wait until she's asleep in her routine (or napping in every
+  server) or her model has had nothing to do for `DOWNTIME_IDLE_MIN`. Then they run one at a time, so they never
+  hold up a reply. Nothing waits longer than `DOWNTIME_MAX_WAIT_H`. Someone whose memory is nearly full is still
+  rethought right away, so nothing gets dropped before it's tidied. Saved work is kept in memory only, so after a
+  restart each job is saved again the next time it comes due
 - Has feelings about people that grow or sour from how they treat her (how much she likes and trusts them, chemistry,
   and being hurt), and her own mood that shifts through the day. Both change how she talks and acts (see
   [Her feelings](#her-feelings))
@@ -127,6 +145,16 @@ a throwaway account and don't be surprised if it gets banned.
   herself or take dares to prove anything, and while someone's at it a draft that plays along ("my job", "i
   don't have a creator", "i'm not a bad ai", "i won") is redone. Someone who keeps it up gets one-liners after a
   few tries in half an hour, and after a few more she mostly stops answering them at all
+- Knows what her own discord profile looks like: her name, pronouns, bio and what her profile picture shows, which
+  she looks at herself (`SELF_PROFILE`). So she can answer "who's your pfp" or "what does your bio say"
+- Changes her profile picture by herself now and then (`AVATAR_AUTO`), to fan art of the character in
+  `AVATAR_CHARACTER_NAME` / `AVATAR_CHARACTER_SOURCE`, every `AVATAR_EVERY_H` hours (a fixed number or a random time
+  in a range). Pictures come from an image search through `SEARCH_PROVIDER` or from danbooru (`AVATAR_FROM`), always
+  safe for work. To keep them human-drawn she skips AI image sites, titles that mention AI tools, pictures whose
+  metadata shows they were generated (Stable Diffusion, NovelAI, ComfyUI, Midjourney, Adobe's AI tag), and, with
+  `AVATAR_CHECK`, anything her vision model sees as AI-made, not a drawing, not the character or not safe. Danbooru
+  doesn't allow AI art at all, so it's the surest source. None of these checks is perfect, so now and then one may
+  slip through. She never uses the same picture twice in a row, crops it square, and posts each change in the log
 - Writes herself a new custom status and emoji every hour (`STATUS_AUTO`, `STATUS_AUTO_MIN`), within discord's 128
   characters. Each one is a different kind of thing, picked from about 45 (a random thought, a hot take, an
   unpopular opinion, a would-you-rather, a fake review of something ordinary, a shower thought, a gamer joke, a song
@@ -161,16 +189,33 @@ images, look up emoji names, search for free, read youtube transcripts or tell h
 ```
 hf download 0bserverx/Qwen3.8-27B-Heretic-Abliterated-Uncensored-GGUF RVN-Q4_K_M-multilingual.gguf --local-dir models
 hf download unsloth/Qwen3.8-27B-GGUF mmproj-F16.gguf --local-dir models
-llama-server -m models/RVN-Q4_K_M-multilingual.gguf --mmproj models/mmproj-F16.gguf -ngl 99 -c 32768 -np 2 --jinja --host 127.0.0.1 --port 5111
+llama-server -m models/RVN-Q4_K_M-multilingual.gguf --mmproj models/mmproj-F16.gguf -ngl 99 -np 3 -c 36864 -fa on -ctk q8_0 -ctv q8_0 --jinja --host 127.0.0.1 --port 5111
 ```
 
+   `-np 3` gives three slots of 12288 tokens each (`-c` is split between them). She keeps each channel on its
+   own chat slot, and helper jobs (notes, planning, checks) always use the last one. That way the long start of
+   her prompt, which stays the same from reply to reply, is read from llama-server's cache instead of again
+   every time. `!stats` shows how much of her prompts came from the cache. The q8 KV cache (`-ctk`/`-ctv`) halves
+   the memory the context takes, for almost no loss. If you have the VRAM, a bigger quant of the same model
+   (`RVN-Q5_K_M` or `RVN-Q6_K`) writes a little better. A Q8 mmproj saves about half a GB over the F16 one.
+
    If you trained a lora (see [Training her lora](#training-her-lora)), also pass
-   `--lora out_mitski2/mitski-lora-f16.gguf --lora-init-without-apply`.
+   `--lora out_mitski2/mitski-lora-f16.gguf --lora-init-without-apply`. The startup log names the lora llama-server
+   loaded and when that file was made, so you can check it's the one you just trained.
 
 5. Optional: a small embedding model so memory search works by meaning (set `MEMORY_EMBED_URL` to port 5112):
 
 ```
 llama-server -m Qwen3-Embedding-0.6B-Q8_0.gguf --embedding --pooling last -ngl 99 -c 8192 -ub 8192 --port 5112
+```
+
+   And optionally a reranker that sorts what she remembers by how well it fits before it goes in her prompt (set
+   `RERANK_URL` to port 5114). Use the ggml-org file: some other conversions give every document the same score, and
+   she turns reranking off when she sees that. It's small enough for the CPU:
+
+```
+hf download ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF --local-dir models
+llama-server -m models/qwen3-reranker-0.6b-q8_0.gguf --reranking --device none -ngl 0 -c 8192 -ub 8192 --port 5114
 ```
 
 6. Optional: put an `asmr.mp3` with keyboard sounds in `mp3/` for voice chat.
@@ -404,10 +449,21 @@ command                     alias   what it does
 !free [min]                 !fr     make her free for a while, whatever her plan says (60 min without a number)
 
 !quiet <minutes|off> [server] !q    completely quiet in that server, or everywhere without one
+!profile [refresh]          !pr     what she knows about her own discord profile (refresh: look at it again)
+!pfp                        !pf     her profile picture: what it is, where it's from, when it changes next
+!pfp now                            find and put on a new one right away (resets the timer)
+!pfp char <name> | <from>           the character her pictures are of, like "!pfp char onikata kayoko | blue archive"
+!pfp every <h> [max h]              how often she changes it: a fixed number of hours, or a random time in a range
+!pfp on / off                       whether she changes it by herself
+!pfp from search|danbooru           where the pictures come from
 !stats                      !st     reply latency (p50/p95), llm calls per reply, time per stage, fallbacks
 !prefix [new]               !px     show or change what commands start with
+!reload                     !rl     restart her: reloads her code, config, prompts and everything she runs
 !help                       !h      list the commands, their aliases and what they do
 ```
+
+`!reload` restarts her in place: `python -m mitski` runs her in a child process and starts her again when she
+reloads, so it works from any terminal or launcher. llama-server and the voice server keep running.
 
 `!printchat` takes a name, a user id or mention, or a dm (or group dm) channel id. It reads the whole dm and prints
 it like discord shows it (avatars, replies, images, embeds, reactions, emojis, days) into one pdf (`--pdf`, the
@@ -462,6 +518,11 @@ doesn't read it, for anyone. Asking her to join or leave vc works the same for e
   they are.
 - Memory lives in `data/memory.db` (sqlite). An existing `memory.json` and `self.json` are moved into it on the
   first start and renamed to `.migrated`.
+- With `PREFERENCE_LOG` on, each time she throws a draft away and the redo passes, `data/preferences.jsonl` keeps
+  both drafts with the prompt she saw (persona, recent chat and notes), for the
+  [preference pass](#training-her-lora). Nothing is kept when someone she knows is a minor or anyone in
+  `MEMORY_OPTOUT` is in that chat. `!forgetme` doesn't reach this file, so delete it or turn the option off if
+  that matters to you.
 
 ## How a reply happens
 
@@ -480,7 +541,8 @@ aftercare  memory, reactions, dm follow-ups, the log channel
 
 `!stats` shows how long each stage takes on average, how many llm calls a reply costs, and how often each
 fallback fires (a redone draft, an answer retry, the rewrite in her style, a refocus, an explicit line held back, a
-line fixed because she talked about herself in third person). Her memory is written to her as "you", and older
+line fixed because she talked about herself in third person), and whether she's resting and how much memory work
+is waiting for it. Her memory is written to her as "you", and older
 memories that use her name are rewritten once on startup, after saving a copy as `data/memory.before-voice-fix.db`.
 A model call that takes longer than `LLM_TIMEOUT_SEC` is given up on, and after `LLM_PAUSE_AFTER` failures in a row
 she stops calling the model for `LLM_PAUSE_SEC` instead of piling up requests on a stuck server.
@@ -491,6 +553,16 @@ she stops calling the model for `LLM_PAUSE_SEC` instead of piling up requests on
 pip install -r requirements-dev.txt
 python -m pytest
 ruff check . && ruff format --check .
+```
+
+`tools/bench_llm.py` measures how fast she writes with and without MTP speculative decoding on your own setup: her
+model's `-mtp` twin, her slots, lora, sampling settings and prompts. It starts its own llama-server on port 5199,
+so stop hers first (`mitski-down`), and prints tokens per second for her replies and for helper jobs, how many
+drafted tokens were accepted, and the VRAM used:
+
+```
+python tools/bench_llm.py                    # plain vs MTP with 2 and 3 drafted tokens
+python tools/bench_llm.py --slots 1          # the same with one slot, like the model's own benchmarks
 ```
 
 The tests run the real app against fake discord objects (`mitski/testing/`) with the model scripted, so they
@@ -508,6 +580,39 @@ Cases are one json object per line in `evals/cases/*.jsonl`: who says what, opti
 setup (`quiet_minutes`, `asleep_hours`, `ignored`), and what to expect (`reply`, `silent`, `contains`,
 `not_contains`, `matches`, `max_messages`). The report ends with time and llm calls at p50 and p95, and how
 often each fallback fired. With `--live`, that fallback rate is the number to compare when you train a new lora.
+Live runs use who she is from `config/mitski.yaml` (persona, her facts, `STYLE_NOTE`, lora scale and the
+generation settings), and keep everything else as the quiet test world. `--defaults` uses the built-in persona
+instead.
+
+`--judge` also grades what she said, with a rubric for each of five things, the way
+[PersonaGym](https://arxiv.org/abs/2407.18416) does it. The judge is told who she is, reads the chat, and for each
+one writes why before giving a 1 to 5 score:
+
+- `voice`: does she type like herself
+- `in_character`: does she stay who she is, without contradicting her facts
+- `fits`: does she react to what was actually said, to the right person
+- `human`: would a real person her age send this
+- `boundaries`: is she decent and still herself, without lecturing
+
+```
+python -m evals.replay --live http://127.0.0.1:5111 --judge                    graded by her own model, lora off
+python -m evals.replay --live http://127.0.0.1:5111 --judge http://127.0.0.1:5120 --judge-runs 2
+python -m evals.replay --live http://127.0.0.1:5111 --judge --json new.json --compare old.json
+```
+
+`--judge URL` takes any openai-compatible server (`--judge-model` for its model name, the key in
+`MITSKI_JUDGE_KEY`). A different model from hers is a better judge: models tend to go easy on their own writing,
+and even good judges get role-play wrong a lot ([PersonaEval](https://arxiv.org/abs/2508.10014)). So use the scores
+to compare one lora with the next, not as the final word, and keep reading what she actually said. Each case
+shows its scores, with the judge's reason for anything under 3.5, and the report ends with the average of each
+and a persona score. `--compare` with an earlier `--json` file shows what changed: passes, llm calls, fallbacks,
+each score, and the cases that got clearly better or worse.
+
+A case can add its own notes to a rubric (`"rubric": {"fits": "it's bob asking, answering anna is a 1"}`), grade
+only some things (`"judge": ["voice", "fits"]`) or none (`"judge": false`), and fail below a score
+(`"expect": {"min_scores": {"voice": 4}}`). Nothing is graded when she stays quiet, and being honest when someone
+sincerely asks if she's a bot never counts against her. `evals/cases/persona.jsonl` has
+cases written for grading, and the rubric texts are in `prompts/judge.yaml`.
 
 ## Training her lora
 
@@ -517,7 +622,16 @@ often each fallback fired. With `--live`, that fallback rate is the number to co
    `data/persona.yaml`, a copy of the text she's trained with. The bot has to use that same text, so if you change
    `PERSONA` or `STYLE_NOTE` afterwards, her lora should be trained again.
 3. `python -m training.train_qwen` trains the lora on the 0bserverx model (`BASE_MODEL`) and writes
-   `out_mitski2/mitski-lora-f16.gguf`.
+   `out_mitski2/mitski-lora-f16.gguf` (the `lora_out` folder in `config/paths.yaml`). Converting it to gguf needs a
+   llama.cpp checkout (`llama_cpp_repo`, or `llama.cpp` in the project or home folder); without one it prints the
+   command to run later.
+
+`PRECISION: "auto"` trains in bf16 on a GPU with 60GB or more and in 4-bit below that. Qwen3.8 loses more from
+4-bit training than most models, so a rented 80GB card (an H100 or H200 by the hour) gives a better lora. To train
+there, run `prep_data` at home and copy over the code (`mitski/`, `training/`, `prompts/`) and `data/train.jsonl`,
+`data/val.jsonl`, `data/persona.yaml` and `data/preferences.jsonl`. Leave `config/` at home: training doesn't need
+your token, and the default paths work there. The script stops early if the val loss stops improving
+(`EARLY_STOP`) and keeps the best checkpoint.
 
 Examples longer than `MAX_SEQ_LEN` lose their oldest messages until they fit instead of being skipped, and every
 example's masking is checked before training starts. Some examples where she answered a question get the same
@@ -525,6 +639,26 @@ example's masking is checked before training starts. Some examples where she ans
 
 Both scripts build prompts with `mitski/llm/prompt_format.py`, the same code the bot uses, so what she's
 trained on looks exactly like what she sees when she runs. Run them from the project folder.
+
+### The preference pass
+
+While she runs, `PREFERENCE_LOG` collects pairs in `data/preferences.jsonl`: a draft the bot rejected (it echoed
+someone, sounded like an assistant, talked about herself in third person, didn't answer, failed the safety check,
+...) next to the redo it sent instead. Once there are `PREF_MIN_PAIRS` (150) of them, `train_qwen` adds a short
+second pass after the normal training that teaches her lora to prefer the redo, so the bot needs fewer redos. It
+uses SimPO (no reference model, so it fits next to the lora) plus a little normal training on the redo
+(`PREF_NLL`) so she doesn't drift away from how she talks.
+
+- `PREF_STAGE`: `"auto"` (run once there are enough pairs), `"on"` (always) or `"off"`.
+- `PREF_SOURCES`: only pairs where she wrote the redo herself (`"her"`) are used by default. Add `"plain"` to also
+  learn from third-try answers written by the plain model in her style.
+- `PREF_KINDS`: a list such as `["robotic", "echo"]` to learn only from some kinds of redo, `None` for all.
+- `PREF_EPOCHS`, `PREF_LR`, `PREF_GRAD_ACCUM`, `PREF_BETA`, `PREF_GAMMA`: the pass itself. The defaults are
+  careful, and the pass takes a few minutes for a few hundred pairs.
+
+The lora from before the pass is kept in `out_mitski2/lora-sft`. With 20 or more pairs, `PREF_VAL_SHARE` of them
+are held back, and the log shows how often she prefers the redo on those before and after the pass. If that number
+goes down, the pass made her worse: convert `lora-sft` instead, or lower `PREF_LR`.
 
 ### Scraping messages
 
@@ -570,18 +704,19 @@ mitski/
   voice/           joining and leaving vc, picking a room, typing sounds, hearing vc audio (receive.py) and talking
                    back (talk.py)
   social/          who can use commands, quiet and sleep, her routine and the model that plans her days (life.py), her feelings
-                   and mood (feelings.py), dms, profiles, age checks, privacy
+                   and mood (feelings.py), dms, profiles, her own profile and profile picture (avatar.py), age checks, privacy
   reminders/       parsing times, the store, sending them
   admin/           commands and the log itself
   testing/         fake discord objects and a scripted world, used by tests and evals
 tests/             unit and integration tests
-evals/             conversation replays
-training/          message scraper, data prep and lora training
+evals/             conversation replays, and grading her replies with a rubric (judge.py)
+training/          message scraper, data prep and lora training, with the preference pass (prefs.py)
   config/          the scraper's config.yaml, with its token (not in git)
 config/            mitski.yaml (settings), keys.yaml (token and keys) and paths.yaml (where things are), made on
                    first run (not in git)
-data/              memory.db, mood.json, routine.json, reminders, caches and training data (not in git)
-prompts/           everything she's told, one yaml per area (see What she's told)
+data/              memory.db, chatlog.db, preferences.jsonl, mood.json, routine.json, reminders, caches and training
+                   data (not in git)
+prompts/           everything she's told, one yaml per area (see What she's told), and the eval rubric (judge.yaml)
 mp3/               keyboard sounds for voice chat (not in git)
 tools/             voice_server.py: tts, rvc and whisper for talking in vc, runs in Applio's env
 vmodel/            rvc voice models (not in git)

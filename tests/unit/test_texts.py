@@ -7,11 +7,12 @@ from mitski.core import texts
 from mitski.core.texts import TextError, fill, fill_all, slots, wording
 
 CODE = Path(texts.__file__).resolve().parent.parent
+FOLDERS = (CODE, CODE.parent / "evals", CODE.parent / "training")
 
 
 def uses():
     out = []
-    for path in CODE.rglob("*.py"):
+    for path in (p for folder in FOLDERS for p in folder.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):

@@ -18,6 +18,7 @@ PLACES = (
     ("llm_mmproj", "models/mmproj-F16.gguf", "its vision projector, so she can see images"),
     ("llm_lora", "out_mitski2/mitski-lora-f16.gguf", "her lora, left out of the launch if the file isn't there"),
     ("embed_model", "models/Qwen3-Embedding-0.6B-Q8_0.gguf", "embedding model for memory search"),
+    ("rerank_model", "models/qwen3-reranker-0.6b-q8_0.gguf", "reranker for what she remembers (RERANK_URL)"),
     ("her voice (tools/voice_server.py)", None),
     ("applio", "Applio", "the Applio folder, its env/python.exe runs the voice server"),
     ("voice_model", "vmodel/voice.pth", "rvc model, .safetensors or applio .pth"),

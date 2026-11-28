@@ -15,7 +15,10 @@ class Situation(Component):
     def minors_among(self, users):
         return self.app.ages.any_minor(users)
 
-    def persona(self, user, guild=None, full=True, channel=None, people=()):
+    def about(self, user, full=True, channel=None):
+        return self.app.policy.tamed(channel, self.memory.blurb(user, full=full))
+
+    def persona(self, user, guild=None, full=True, channel=None, people=(), about=True):
         policy = self.app.policy
         parts = [
             policy.tamed(channel, self.cfg.PERSONA),
@@ -29,7 +32,7 @@ class Situation(Component):
             parts.append(blocking)
         parts.append(guard.STAY_A_PERSON)
         for blurb in (
-            policy.tamed(channel, self.memory.blurb(user, full=full)),
+            self.about(user, full=full, channel=channel) if about else "",
             policy.tamed(channel, self.app.servers.blurb(guild)) if guild is not None else "",
             self.memory.self_blurb(),
             self.app.profiles.own_status(),
@@ -40,7 +43,7 @@ class Situation(Component):
         parts.append(policy.note(channel, minors=self.minors_among([user, *people])))
         return "\n\n".join(parts)
 
-    def notes(self, mode, channel, target, msgs, extras=(), around=(), burst=None):
+    def notes(self, mode, channel, target, msgs, extras=(), around=(), burst=None, about=""):
         user = getattr(target, "author", None)
         her_id = self.me.id
         recent = list(msgs)[-12:]
@@ -68,6 +71,8 @@ class Situation(Component):
             lines.append(wording("chat.joining_in"))
         elif mode == "dm_open":
             lines.append(say("chat.starting_dm", name=call))
+        if about:
+            lines.append(about)
 
         burst = [m for m in (burst or [target]) if m is not None]
         if guild is not None and user is not None and mode != "dm_open":

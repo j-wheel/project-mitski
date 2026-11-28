@@ -14,6 +14,8 @@ class MessageRouter(Component):
     async def route(self, msg):
         if msg.guild is not None and self.messages.allowed_channel(msg.channel):
             self.state.chan_log[msg.channel.id].append((msg.id, msg.author.id))
+        if self._worth_keeping(msg):
+            self.app.chatlog.keep(msg)
         if not self._from_a_person(msg):
             return
         if await self.app.admin.dispatch(msg):
@@ -29,6 +31,13 @@ class MessageRouter(Component):
         self.app.emojis.index_message(msg)
         if self.messages.allowed_channel(msg.channel):
             await self._channel_message(msg)
+
+    def _worth_keeping(self, msg):
+        if self.cfg.LOG_CHANNEL and msg.channel.id == self.cfg.LOG_CHANNEL:
+            return False
+        if not (isinstance(msg.channel, discord.DMChannel) or self.messages.allowed_channel(msg.channel)):
+            return False
+        return self.messages.usable(msg)
 
     def _from_a_person(self, msg):
         author = msg.author
@@ -78,9 +87,12 @@ class MessageRouter(Component):
         self.state.last_msg_time[key] = time.monotonic()
         self.state.msg_count[cid] += 1
         self.memory.overheard(msg.author, msg.content, msg.channel)
-        if self.app.ambient.should_join(cid):
+        if self.app.thoughts.on:
+            self.app.thoughts.heard(msg)
+        elif self.app.ambient.should_join(cid):
             self.app.pipeline.join_in(msg.channel, msg)
-        elif (
+            return
+        if (
             self.cfg.REACTIONS
             and self.app.routine.free_in(getattr(msg.guild, "id", None))
             and random.random() < self.cfg.AMBIENT_REACT_CHANCE

@@ -4,6 +4,7 @@ import re
 import time
 
 from mitski.chat.patterns import CUSTOM_EMOJI
+from mitski.core.collections import BoundedDict
 from mitski.core.component import Component
 from mitski.core.storage import JsonFile
 from mitski.core.texts import wording
@@ -51,6 +52,7 @@ class Emojis(Component):
         self.file = JsonFile(app.cfg.paths.data_file("server_index.json"))
         self.index = {}
         self.dirty = False
+        self.hints = BoundedDict(64)
 
     def load(self):
         self.index = self.file.load()
@@ -176,17 +178,24 @@ class Emojis(Component):
         return here + sorted(others, key=lambda st: -uses(st))
 
     def hint(self, guild):
+        hour = int(time.time() // 3600)
+        key = (guild.id if guild else 0, hour)
+        cached = self.hints.get(key)
+        if cached is not None:
+            return cached
         ranked = self.ranked(guild)
         if not ranked or self.cfg.EMOJI_HINT_MAX <= 0:
             return ""
         top = ranked[: max(1, self.cfg.EMOJI_HINT_MAX - 5)]
         rest = ranked[len(top) :]
-        seed = (guild.id if guild else 0) + int(time.time() // 3600)
-        rng = random.Random(seed)
+        rng = random.Random(key[0] + hour)
         top += rng.sample(rest, min(5, len(rest)))
         if self.external_ok(guild, "emojis"):
-            return (wording("media.emojis_nitro") + " ") + " ".join(f":{e.name}:" for e in top)
-        return (wording("media.emojis_server") + " ") + " ".join(f":{e.name}:" for e in top)
+            text = (wording("media.emojis_nitro") + " ") + " ".join(f":{e.name}:" for e in top)
+        else:
+            text = (wording("media.emojis_server") + " ") + " ".join(f":{e.name}:" for e in top)
+        self.hints[key] = text
+        return text
 
     def find_sticker(self, guild, name):
         name = re.sub(r"\s*\(.*$", "", name).strip().lower()

@@ -17,12 +17,14 @@ from mitski.chat.drafts import DraftFilter
 from mitski.chat.messages import MessageView, short_name
 from mitski.chat.pipeline import ReplyPipeline
 from mitski.chat.policy import ContentPolicy
+from mitski.chat.preferences import Preferences
 from mitski.chat.review import DraftReview
 from mitski.chat.router import MessageRouter
 from mitski.chat.sender import Sender
 from mitski.chat.situation import Situation
 from mitski.chat.state import ChatState
 from mitski.chat.style import Style
+from mitski.chat.thoughts import InnerThoughts
 from mitski.core import logs
 from mitski.core.clock import Clock
 from mitski.core.identity import Identity
@@ -36,6 +38,8 @@ from mitski.media.extras import Extras
 from mitski.media.reactions import Reactions
 from mitski.media.youtube import YouTube
 from mitski.memory.activity import Tracker
+from mitski.memory.chatlog import ChatLog
+from mitski.memory.downtime import Downtime
 from mitski.memory.knowledge import Knowledge
 from mitski.memory.memory import Memory
 from mitski.memory.servers import ServerNotes
@@ -43,6 +47,7 @@ from mitski.reminders.scheduler import ReminderScheduler
 from mitski.reminders.store import Reminders
 from mitski.report import startup_report
 from mitski.social.ages import AgeGuard
+from mitski.social.avatar import SelfProfile
 from mitski.social.away import Away
 from mitski.social.blocking import Blocking
 from mitski.social.dms import DirectMessages
@@ -82,6 +87,7 @@ class App:
         self.client = client or make_client(cfg.PROFILES)
         self.http = None
         self.started = False
+        self.reload_requested = False
 
         self.clock = Clock(cfg.TIMEZONE)
         self.metrics = Metrics(cfg.METRICS_WINDOW)
@@ -98,6 +104,7 @@ class App:
         self.llm = LlamaClient(self)
         self.helper = HelperModel(self)
         self.memory = Memory(self)
+        self.chatlog = ChatLog(self)
         self.feelings = Feelings(self)
         self.custom_status = CustomStatus(self)
 
@@ -105,11 +112,14 @@ class App:
         self.context = ContextBuilder(self)
         self.addressing = Addressing(self)
         self.ambient = Ambient(self)
+        self.thoughts = InnerThoughts(self)
+        self.preferences = Preferences(self)
         self.ages = AgeGuard(self)
         self.policy = ContentPolicy(self)
         self.identity = Identity(cfg)
         self.servers = ServerNotes(self)
         self.knowledge = Knowledge(self)
+        self.downtime = Downtime(self)
         self.situation = Situation(self)
         self.drafts = DraftFilter(self)
         self.review = DraftReview(self)
@@ -129,6 +139,7 @@ class App:
         self.voice = Voice(self)
 
         self.profiles = Profiles(self)
+        self.self_profile = SelfProfile(self)
         self.reacted = ReactionsSeen(self)
         self.blocking = Blocking(self)
         self.dms = DirectMessages(self)
@@ -270,6 +281,9 @@ class App:
             ("routine", self.routine.run()),
             ("feelings", self.feelings.run()),
             ("custom-status", self.custom_status.run()),
+            ("self-profile", self.self_profile.run()),
+            ("chat-history", self.chatlog.run()),
+            ("downtime", self.downtime.run()),
             ("reminders", self.scheduler.run()),
         ):
             self.tasks.spawn(loop, name=name)
@@ -278,8 +292,10 @@ class App:
 
     def _load(self):
         self.memory.load()
+        self.chatlog.open()
         self.feelings.load()
         self.custom_status.load()
+        self.self_profile.load()
         self.policy.load()
         self.servers.load()
         self.knowledge.load()
@@ -329,8 +345,14 @@ class App:
         except (OSError, sqlite3.Error):
             log.warning("saving on shutdown failed", exc_info=True)
         self.memory.db.close()
+        self.chatlog.close()
         if self.http is not None:
             await self.http.close()
+
+    def reload_soon(self, delay=1.5):
+        self.reload_requested = True
+        loop = asyncio.get_running_loop()
+        loop.call_later(delay, lambda: loop.create_task(self.client.close()))
 
     async def run(self):
         async with self.client:

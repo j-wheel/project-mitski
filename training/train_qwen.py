@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 
@@ -21,12 +22,13 @@ if not torch.cuda.is_available():
         "(use cu126 instead if nvidia-smi shows a CUDA Version below 13.0)"
     )
 
+from unsloth import FastLanguageModel  # noqa: I001 (unsloth has to come before transformers to patch it)
 from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
-from unsloth import FastLanguageModel
 
 from mitski.llm.prompt_format import Format
 from mitski.paths import Paths
 from training.examples import LEAK_MARKERS, encode_row
+from training.prefs import PairCollate, accuracy, batch_loss, encode_pair, load_pairs, split
 
 PATHS = Paths.discover()
 
@@ -54,6 +56,20 @@ GGUF_QUANT = "q4_k_m"
 OFFLOAD = "auto"
 LLAMA_CPP = str(PATHS.get("llama_cpp_repo") or "")
 SEED = 3407
+# after the normal training, a short pass on the pairs the bot logs (data/preferences.jsonl, PREFERENCE_LOG):
+# a draft she threw away next to the redo she sent. "auto" runs it once there are PREF_MIN_PAIRS of them
+PREF_STAGE = "auto"
+PREF_FILE = str(PATHS.data_file("preferences.jsonl"))
+PREF_MIN_PAIRS = 150
+PREF_SOURCES = ("her",)
+PREF_KINDS = None
+PREF_EPOCHS = 1
+PREF_LR = 5e-6
+PREF_GRAD_ACCUM = 8
+PREF_BETA = 2.0
+PREF_GAMMA = 1.0
+PREF_NLL = 0.2
+PREF_VAL_SHARE = 0.1
 
 FMT = Format("qwen")
 
@@ -172,6 +188,81 @@ def training_args(n_train, has_val):
     if dropped:
         print(f"(this transformers doesn't take {dropped}, going without)")
     return TrainingArguments(**args), steps
+
+
+class PreferenceTrainer(Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # the loss is already a mean per pair, so the trainer has to do the usual split over grad accumulation
+        self.model_accepts_loss_kwargs = False
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        loss, out = batch_loss(model, inputs, PREF_BETA, PREF_GAMMA, PREF_NLL)
+        return (loss, out) if return_outputs else loss
+
+
+def preference_pairs():
+    if PREF_STAGE in ("off", False):
+        return []
+    pairs = load_pairs(PREF_FILE, PREF_SOURCES, PREF_KINDS)
+    if len(pairs) < PREF_MIN_PAIRS and PREF_STAGE != "on":
+        if pairs:
+            print(f"{len(pairs)} preference pairs so far, the preference pass waits for {PREF_MIN_PAIRS}")
+        return []
+    return pairs
+
+
+def preference_stage(model, tok, pairs):
+    encoded = [e for e in (encode_pair(tok, p, FMT, MAX_SEQ_LEN) for p in pairs) if e is not None]
+    if not encoded:
+        print("no preference pairs fit in MAX_SEQ_LEN, skipping the preference pass")
+        return False
+    train, held = split(encoded, PREF_VAL_SHARE, random.Random(SEED))
+    kinds = {}
+    for p in pairs:
+        kinds[p.get("kind")] = kinds.get(p.get("kind"), 0) + 1
+    print(
+        f"\npreference pass: {len(train)} pairs to learn from, {len(held)} held back ("
+        + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
+        + ")"
+    )
+    os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
+    collate = PairCollate(tok.pad_token_id)
+    before = accuracy(model, held, collate)
+    args = TrainingArguments(
+        output_dir=os.path.join(OUT_DIR, "pref_checkpoints"),
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=PREF_GRAD_ACCUM,
+        num_train_epochs=PREF_EPOCHS,
+        learning_rate=PREF_LR,
+        lr_scheduler_type="cosine",
+        warmup_steps=max(1, round(math.ceil(len(train) / PREF_GRAD_ACCUM) * PREF_EPOCHS * 0.1)),
+        max_grad_norm=1.0,
+        optim="adamw_8bit",
+        logging_steps=5,
+        save_strategy="no",
+        remove_unused_columns=False,
+        dataloader_num_workers=0,
+        seed=SEED,
+        report_to="none",
+        bf16=torch.cuda.is_bf16_supported(),
+        fp16=not torch.cuda.is_bf16_supported(),
+    )
+    PreferenceTrainer(
+        model=model,
+        args=args,
+        train_dataset=train,
+        data_collator=collate,
+    ).train()
+    after = accuracy(model, held, collate)
+    if before[0] is not None:
+        print(
+            f"held-back pairs where she prefers the redo: {before[0]:.0%} -> {after[0]:.0%} "
+            f"(avg logp margin {before[1]:+.3f} -> {after[1]:+.3f})"
+        )
+        if after[0] < before[0]:
+            print("that got worse: use the lora-sft copy instead, or lower PREF_LR")
+    return True
 
 
 def find_llama_cpp():
@@ -377,6 +468,12 @@ def main():
 
     persona = read_persona()
     lora_dir = os.path.join(OUT_DIR, "lora")
+    pairs = preference_pairs()
+    if pairs:
+        sft_dir = os.path.join(OUT_DIR, "lora-sft")
+        model.save_pretrained(sft_dir)
+        print(f"saved the lora before the preference pass -> {sft_dir}")
+        preference_stage(model, tok, pairs)
     model.save_pretrained(lora_dir)
     tokenizer.save_pretrained(lora_dir)
     with open(os.path.join(lora_dir, "mitski_persona.json"), "w", encoding="utf-8") as f:

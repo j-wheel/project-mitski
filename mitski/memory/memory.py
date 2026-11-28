@@ -8,6 +8,7 @@ from mitski.memory.database import PeopleDB
 from mitski.memory.embeddings import Embedder
 from mitski.memory.notes import NotesMixin
 from mitski.memory.recall import RecallMixin
+from mitski.memory.rerank import Reranker
 from mitski.memory.store import PeopleStore
 
 
@@ -36,6 +37,7 @@ class Memory(NotesMixin, RecallMixin, CommandsMixin, PeopleStore):
         )
         self.save_lock = asyncio.Lock()
         self.embed = Embedder(cfg, lambda: app.http)
+        self.rerank = Reranker(cfg, lambda: app.http)
         self.people = {}
         self.own = {"facts": [], "next_id": 1}
         self.dirty = False
